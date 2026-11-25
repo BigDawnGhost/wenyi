@@ -355,7 +355,7 @@ class GlossaryStore:
         book state.
         """
         with tempfile.TemporaryDirectory(prefix="wenyi-glossary-review-") as directory:
-            snapshot_path = f"{directory}/glossary.db"
+            snapshot_path = os.path.join(directory, "glossary.db")
             wal_path = f"{db_path}-wal"
             snapshot_wal_path = f"{snapshot_path}-wal"
 

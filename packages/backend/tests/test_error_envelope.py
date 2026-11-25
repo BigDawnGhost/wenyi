@@ -1,7 +1,10 @@
 """Error codes are additive: every old client still sees its ``detail`` text."""
 
+from typing import cast
+
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from starlette.types import ExceptionHandler
 from wenyi_backend.errors import (
     PROJECT_BUSY,
     ApiError,
@@ -13,8 +16,8 @@ from wenyi_backend.errors import (
 
 def _client():
     app = FastAPI()
-    app.add_exception_handler(ApiError, api_error_handler)
-    app.add_exception_handler(HTTPException, http_exception_handler)
+    app.add_exception_handler(ApiError, cast(ExceptionHandler, api_error_handler))
+    app.add_exception_handler(HTTPException, cast(ExceptionHandler, http_exception_handler))
 
     @app.get("/busy")
     def busy():

@@ -59,7 +59,7 @@
     --secondary-hover: 0.953 0.0013 286.38;
     --secondary-pressed: var(--secondary);
     --muted: 0.9676 0.0013 286.38;
-    --muted-foreground: 0.5519 0.0137 285.94;
+    --muted-foreground: 0.5441 0.0137 285.94;
     /* Ink anchor for alpha-derived interaction surfaces: fixed near-black in
        the light theme, near-white in dark. Deliberately not var(--foreground),
        which carries the 240 hue; state surfaces stay neutral so one alpha step
@@ -81,8 +81,8 @@
     --accent-foreground: 0.2103 0.0059 285.88;
     /* Third text tier: placeholder and disabled copy sit one step below the
        secondary text (muted-foreground). */
-    --text-placeholder: var(--ink) / 0.35;
-    --destructive: 0.6368 0.2078 25.33;
+    --text-placeholder: var(--ink) / 0.65;
+    --destructive: 0.5347 0.2078 25.33;
     --destructive-foreground: 0.9848 0 0;
     --warning: 0.5542 0.1447 49.16;
     --warning-foreground: 0.9848 0 0;
@@ -104,11 +104,11 @@
     --status-info-border: 0.8605 0.0668 255.25;
     /* Chart hues retain their meaning; the dark palette reduces saturation and glare. */
     --chart-track: var(--muted);
-    --chart-1: 0.8273 0.1014 230.38;
-    --chart-2: 0.7686 0.1646 70.11;
+    --chart-1: 0.6398 0.1014 230.38;
+    --chart-2: 0.6532 0.1646 70.11;
     --chart-3: 0.5875 0.1388 241.95;
-    --chart-4: 0.8688 0.0198 252.85;
-    --chart-5: 0.7038 0.123 182.48;
+    --chart-4: 0.6453 0.0198 252.85;
+    --chart-5: 0.6265 0.123 182.48;
     --chart-6: 0.5547 0.0407 257.44;
     --diff-removed-bg: 0.9355 0.031 17.72;
     --diff-removed-foreground: 0.3959 0.1331 25.72;
@@ -119,7 +119,7 @@
        group boundaries) so dense lists do not fog up like the standard
        hairline does. */
     --border-subtle: var(--ink) / 0.055;
-    --input: 0.9197 0.004 286.32;
+    --input: 0.6459 0.004 286.32;
     --ring: 0.2103 0.0059 285.88;
     --radius: 8px;
     /* Elevation scale: e0 wells, e1-e2 resting surfaces, e3 hover lift, e4
@@ -298,87 +298,6 @@ body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus-vi
 }
 .input-quiet:focus-visible:not(:disabled) {
   box-shadow: var(--shadow-input-hover);
-}
-
-/* Floating action bar, built in three layers so each optical property is
-   tunable on its own instead of fighting inside one backdrop-filter:
-
-     ::before  frost  — samples the page, blurs and saturates it into the
-                       colour wash. Nothing crisp lives here.
-     children  content — buttons and labels, painted above the frost so
-                       they keep their native subpixel rendering.
-     ::after   sheen  — the specular highlight that reads as thickness.
-
-   The parent must not create a backdrop root (no isolation, filter,
-   transform or opacity), or the frost would sample its own stacking
-   context and come out empty. */
-/* No `position` here: the bar is already `sticky`, which is a positioned
-   element and therefore its own containing block, so the absolutely
-   positioned layers anchor to it. Declaring `relative` would override
-   the utility and drop the bar out of the sticky flow. */
-.glass-bar {
-  box-shadow:
-    0 12px 36px -6px rgba(15, 23, 42, 0.16),
-    0 2px 8px rgba(15, 23, 42, 0.07);
-}
-/* Frost: the pane is one flat tint over a blurred backdrop, nothing else.
-   The border lives on this layer rather than on the container so it gets
-   the same backdrop treatment; a border on the parent would paint a crisp
-   line over a blurred surface, which reads as a separate outline floating
-   above the glass instead of the glass edge itself. */
-.glass-bar::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  box-sizing: border-box;
-  border: 1px solid rgba(24, 26, 32, 0.10);
-  border-radius: inherit;
-  background-color: rgba(255, 255, 255, 0.22);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  backdrop-filter: blur(20px) saturate(180%);
-}
-/* Sheen: a 1px inner hairline on the top edge only. It reads as the lip of
-   a physical pane without adding a gradient across the face. */
-.glass-bar::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  border-radius: inherit;
-  pointer-events: none;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
-}
-.glass-bar > * {
-  position: relative;
-  z-index: 1;
-}
-
-/* The bar mounts with the page but floats above the content, so it would
-   otherwise appear fully formed while the page beneath is still fading in.
-   Same duration and curve as the page entrance so the two read as one
-   movement. Only opacity and transform animate: the bar is horizontally
-   centred by layout, so transform is free, and neither property triggers
-   a relayout. */
-/* Movement only, no opacity. A translucent element forces the browser to skip
-   or defer its own backdrop-filter, so a fade-in shows the bar unfrosted until
-   the last frame and the glass then pops in. Rising from below keeps the same
-   entrance without ever leaving the element opaque. */
-@keyframes bar-enter {
-  from { transform: translateY(14px); }
-  to { transform: translateY(0); }
-}
-.dark .glass-bar {
-  box-shadow:
-    0 12px 36px -6px rgba(0, 0, 0, 0.55),
-    0 2px 8px rgba(0, 0, 0, 0.40);
-}
-.dark .glass-bar::before {
-  border-color: rgba(255, 255, 255, 0.10);
-  background-color: rgba(38, 38, 38, 0.26);
-}
-.dark .glass-bar::after {
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 /* Keep the centered content column steady when the scrollbar appears or

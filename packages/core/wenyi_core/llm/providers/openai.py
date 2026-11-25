@@ -55,8 +55,8 @@ class OpenAIClient(OpenAICompatibleBaseClient[OpenAIOptions]):
     default_api_key_env = DEFAULT_API_KEY_ENV
     requires_api_key = True
 
-    def _normalize_usage(self, usage: Any) -> UsageSample | None:
-        return normalize_openai_usage(usage, separate_cache_writes=False)
+    def _normalize_usage(self, usage: Any, *, max_tokens: int | None = None) -> UsageSample | None:
+        return normalize_openai_usage(usage, separate_cache_writes=False, max_tokens=max_tokens)
 
     def _build_request_kwargs(
         self,

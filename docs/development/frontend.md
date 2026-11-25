@@ -196,7 +196,6 @@ shared [stylesheet](../../packages/ui/src/index.css#L15):
 | `runtime-placeholder` | Desktop runtime pending/closing gate |
 | `route-placeholder` | Quiet in-content route gate |
 | `disclosure-summary`, `disclosure-chevron` | Native disclosure styling |
-| `glass-bar` | Floating action bar glass: translucent tint plus backdrop blur |
 
 These are authoring conventions, not a claim that every dependency or older
 arbitrary utility is px-only. Keep shared theme tokens and reduced-motion behavior
@@ -213,9 +212,10 @@ Do not replace this with native `showModal()`, whose browser top layer would cov
 those options. The shared backdrop uses 2px blur.
 
 Mount [NotificationToaster](../../packages/ui/src/components/NotificationToaster.tsx#L5)
-once in the shell, outside scrolling route content. Its body portal is viewport-fixed
-at the top right, above dialogs/dropdowns, with usable close controls. Async feedback
-does not follow the last clicked button; scrolling or unrelated clicks must not move it.
+once in the shell, outside scrolling route content. Its body portal is fixed at the
+bottom and centered on the content pane, above dialogs/dropdowns, with usable close
+controls. Async feedback does not follow the last clicked button; scrolling or
+unrelated clicks must not move it.
 
 Use the shared [toast adapter](../../packages/ui/src/lib/toast.ts#L5):
 success defaults to one second, errors/warnings to ten seconds and informational
@@ -225,9 +225,12 @@ remains visible in the open form after its toast expires.
 
 ## Validation in both hosts
 
-Use Node 22 and pnpm 9. Install dependencies with `pnpm install --frozen-lockfile`
-and Playwright Chromium with `pnpm -C apps/web exec playwright install chromium`
-when it is not already available. From the repository root:
+Use Node 26 LTS and the pnpm 9 version pinned in the root
+[`package.json`](../../package.json) (`packageManager`). Node 26 does not bundle
+Corepack; install pnpm separately with npm or your tool manager before running
+`pnpm install --frozen-lockfile`. If Playwright Chromium is not already available,
+install it with `pnpm -C apps/web exec playwright install chromium`.
+From the repository root:
 
 ```bash
 pnpm -C apps/web typecheck

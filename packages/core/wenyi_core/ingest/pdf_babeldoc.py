@@ -12,6 +12,7 @@ import logging
 import os
 import re
 from bisect import bisect_right
+from collections.abc import Iterable, Iterator
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import cached_property
@@ -232,8 +233,23 @@ def _paragraph_page(para: dict) -> int | None:
     return None
 
 
+def _releasing_paragraphs(paragraphs: list[Any]) -> Iterator[dict]:
+    """Yield bridge paragraphs once, clearing each consumed slot.
+
+    Whole-book extracts can hold hundreds of megabytes of decoded JSON.
+    Chapter assembly only needs one paragraph at a time, so clearing each
+    slot lets the raw payloads be freed while the document is built instead
+    of keeping the entire extract alive alongside it.
+    """
+    for index in range(len(paragraphs)):
+        para = paragraphs[index]
+        paragraphs[index] = None
+        if isinstance(para, dict):
+            yield para
+
+
 def _chapters_from_paragraphs(
-    paragraphs: list[dict],
+    paragraphs: Iterable[dict],
     *,
     book_title: str,
     toc_starts: list[tuple[int, str]],
@@ -278,7 +294,9 @@ def _chapters_from_paragraphs(
         out_index += 1
 
     if not chapters:
-        return _chapters_from_paragraphs(paragraphs, book_title=book_title, toc_starts=[])
+        # Every paragraph was consumed while bucketing and none produced a
+        # segment, so the single-chapter fallback needs no second pass.
+        return [Chapter(index=0, title=book_title, segments=[], meta={BABELDOC_META: True})]
     return chapters
 
 
@@ -410,8 +428,12 @@ def read_pdf_babeldoc(
     except Exception:
         toc_starts = []
 
+    # Release the decoded extract payload while chapters are assembled: the
+    # paragraph list is consumed slot by slot instead of staying alive
+    # alongside the growing document.
+    del payload, paragraphs_doc
     chapters = _chapters_from_paragraphs(
-        [p for p in paragraphs if isinstance(p, dict)],
+        _releasing_paragraphs(paragraphs),
         book_title=title,
         toc_starts=toc_starts,
     )

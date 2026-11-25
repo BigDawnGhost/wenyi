@@ -33,7 +33,11 @@ test("plugin setup persists across navigation, retries and shares update progres
   await page.goto("/settings/pdf");
   const plugin = page.getByTestId("babeldoc-plugin");
   await expect(plugin).toContainText("未启用");
-  await expect(plugin).toContainText("AGPL-3.0-only");
+  // The license is identity metadata: it belongs beside the group heading,
+  // not inside the interactive plugin card.
+  const heading = page.getByRole("heading", { name: /BabelDOC 插件/ });
+  await expect(heading).toContainText("AGPL-3.0-only");
+  await expect(plugin).not.toContainText("AGPL-3.0-only");
   await expect(plugin).not.toContainText("可选的本地 PDF");
   await expect(plugin).not.toContainText("启用后从");
   expect(actions).toEqual([]);
@@ -48,14 +52,17 @@ test("plugin setup persists across navigation, retries and shares update progres
   await expect(plugin.getByRole("button")).toHaveCount(1);
   const cancel = plugin.getByRole("button", { name: "取消下载" });
   await expect(cancel).toBeVisible();
+  // Actions share the progress label row: above the bar, right-aligned with it.
   const buttonBox = await cancel.boundingBox();
-  const progressBox = await plugin.locator('[data-slot="transfer-progress"]').boundingBox();
-  expect(buttonBox!.y + buttonBox!.height).toBeLessThan(progressBox!.y);
-  expect(Math.abs(buttonBox!.x + buttonBox!.width - progressBox!.x - progressBox!.width)).toBeLessThanOrEqual(1);
+  const barBox = await plugin.getByRole("progressbar").boundingBox();
+  expect(buttonBox!.y + buttonBox!.height).toBeLessThanOrEqual(barBox!.y);
+  expect(Math.abs(buttonBox!.x + buttonBox!.width - barBox!.x - barBox!.width)).toBeLessThanOrEqual(1);
   await plugin.screenshot({ path: testInfo.outputPath("plugin-progress.png") });
+  const progressClass = await plugin.locator('[data-slot="transfer-progress"]').getAttribute("class");
+  await page.getByRole("link", { name: "关于", exact: true }).click();
   const update = page.getByTestId("desktop-updates");
-  expect(await plugin.locator('[data-slot="transfer-progress"]').getAttribute("class"))
-    .toEqual(await update.locator('[data-slot="transfer-progress"]').getAttribute("class"));
+  await expect(update.getByRole("progressbar")).toBeVisible();
+  expect(await update.locator('[data-slot="transfer-progress"]').getAttribute("class")).toEqual(progressClass);
   await page.getByRole("button", { name: "返回", exact: true }).click();
   await page.getByRole("link", { name: "设置", exact: true }).click();
   await page.getByRole("link", { name: "PDF", exact: true }).click();
@@ -68,6 +75,30 @@ test("plugin setup persists across navigation, retries and shares update progres
   await plugin.getByRole("button", { name: "取消下载" }).click();
   await expect(plugin).toContainText("未启用");
   expect(actions).toEqual(["enable", "enable", "disable"]);
+});
+
+test("plugin startup keeps keyboard focus on the action when it becomes ready", async ({ page }) => {
+  await page.addInitScript(() => Object.assign(window, {
+    __WENYI_DESKTOP__: { apiBase: `${location.origin}/api`, token: "fixture" },
+  }));
+  await fakeApi(page);
+  let phase = "starting";
+  await page.route("**/api/desktop/plugins/babeldoc", route => route.fulfill({
+    json: {
+      enabled: true, installed: true, supported: true, phase,
+      downloaded: 0, total: null, error: null, version: "0.1.0",
+    },
+  }));
+  await page.goto("/settings/pdf");
+  const plugin = page.getByTestId("babeldoc-plugin");
+  const cancel = plugin.getByRole("button", { name: "Cancel setup", exact: true });
+  await cancel.focus();
+  await expect(cancel).toBeFocused();
+
+  phase = "ready";
+  const disable = plugin.getByRole("button", { name: "Disable plugin", exact: true });
+  await expect(disable).toBeFocused();
+  await expect(plugin.getByRole("progressbar")).toHaveCount(0);
 });
 
 for (const [detail, copy] of [

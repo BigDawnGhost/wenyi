@@ -214,7 +214,7 @@ def test_postgres_deletion_serializes_export_admission_without_open_transaction(
 
     def export():
         requesting.set()
-        return context.exports.admit_export(pid, "txt", {}, "late-export", {})
+        return context.exports.admit_export(pid, "txt", {}, "late-export", {}, source={})
 
     monkeypatch.setattr(adapters.shutil, "rmtree", remove)
     with ThreadPoolExecutor(max_workers=2) as executor:

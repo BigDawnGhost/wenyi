@@ -5,7 +5,7 @@ import { Check, ChevronDown, RefreshCw } from "lucide-react";
 import { api } from "../../api/client";
 import type { ModelListResult } from "../../api/types";
 import { useI18n, type MessageKey } from "../../i18n";
-import { Input } from "../../components/ui/form";
+import { Input, fieldAria } from "../../components/ui/form";
 import { Button } from "../../components/ui/button";
 import { cn } from "../../lib/utils";
 import { SettingsRow, SETTINGS_CONTROL_CLASSNAME } from "./SettingsRow";
@@ -37,6 +37,8 @@ export function ModelNameField({
   provider,
   credential,
   action,
+  error,
+  errorId,
   onChange,
 }: {
   id: string;
@@ -45,6 +47,8 @@ export function ModelNameField({
   provider: Document | undefined;
   credential?: string;
   action: ReactNode;
+  error?: string | null;
+  errorId?: string;
   onChange: (value: string) => void;
 }) {
   const { t } = useI18n();
@@ -117,6 +121,7 @@ export function ModelNameField({
           <Input
             ref={inputRef}
             id={id}
+            {...fieldAria(errorId, error)}
             role="combobox"
             aria-expanded={expanded}
             aria-controls={expanded ? listId : undefined}

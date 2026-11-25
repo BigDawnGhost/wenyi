@@ -30,7 +30,7 @@ from wenyi_core.assemble.writer_common import (
     _sanitize_filename,
 )
 from wenyi_core.atomicio import publish_target
-from wenyi_core.ingest.fb2_reader import read_fb2_binaries
+from wenyi_core.ingest.fb2_reader import read_fb2_binaries, read_fb2_image_alts
 from wenyi_core.models.document import KIND_HEADING
 
 from .export_view import AssembleStore, ExportViewStore
@@ -45,9 +45,12 @@ def _assemble_epub(
     order: str = "target_first",
     preserve_source_style: bool = False,
     about: AboutPage | None = None,
+    warnings: list[str] | None = None,
 ) -> str:
     """Copy the EPUB and replace physical body resources, exact TOC titles and target-language
     metadata.
+
+    The native engine handles resource resolution itself, so ``warnings`` stays unused here.
     """
     if os.path.abspath(source_path) == os.path.abspath(out_path):
         # Opening the target for writing would truncate the archive still being read.
@@ -95,6 +98,13 @@ def _assemble_epub(
     return out_path
 
 
+def _fb2_image_div(href: str, alt: str) -> str:
+    return (
+        f'<div class="fb2-image"><img src="{escape(href, quote=True)}"'
+        f' alt="{escape(alt, quote=True)}"/></div>'
+    )
+
+
 def _build_epub_from_chapters(
     store: AssembleStore,
     source_path: str,
@@ -104,6 +114,7 @@ def _build_epub_from_chapters(
     order: str = "target_first",
     preserve_source_style: bool = False,
     about: AboutPage | None = None,
+    warnings: list[str] | None = None,
 ) -> str:
     """Build a standard EPUB3 from chapters when no original EPUB template exists."""
     m = store.load_manifest()
@@ -118,8 +129,10 @@ def _build_epub_from_chapters(
     image_hrefs: dict[str, str] = {}
     raw_meta = m.get("meta")
     manifest_meta = raw_meta if isinstance(raw_meta, dict) else {}
+    image_alts: dict[str, str] = {}
     if m.get("fmt") == "fb2":
         binaries = read_fb2_binaries(source_path)
+        image_alts = read_fb2_image_alts(source_path)
         cover_id = manifest_meta.get("fb2_cover_image")
         used_hrefs: set[str] = set()
         for index, (resource_id, (content_type, payload)) in enumerate(binaries.items()):
@@ -146,7 +159,7 @@ def _build_epub_from_chapters(
         ch = store.load_chapter(c["index"])
         ch_title = _ch_title(c) or ch.title
         body_parts = []
-        images_by_position: dict[int, list[str]] = {}
+        images_by_position: dict[int, list[tuple[str, str]]] = {}
         raw_images = ch.meta.get("fb2_images")
         if isinstance(raw_images, list):
             for image in raw_images:
@@ -158,13 +171,18 @@ def _build_epub_from_chapters(
                     continue
                 href = image_hrefs.get(resource_id)
                 if href:
-                    images_by_position.setdefault(position, []).append(href)
+                    images_by_position.setdefault(position, []).append(
+                        (href, image_alts.get(resource_id, ""))
+                    )
+                elif warnings is not None:
+                    warnings.append(
+                        f"chapter {c['index']}: unresolved FB2 image reference: {resource_id}"
+                    )
 
         paragraphs = _merged_paragraphs(ch)
         for position, (kind, target, source, level) in enumerate(paragraphs):
             body_parts.extend(
-                f'<div class="fb2-image"><img src="{escape(href, quote=True)}" alt=""/></div>'
-                for href in images_by_position.get(position, [])
+                _fb2_image_div(href, alt) for href, alt in images_by_position.get(position, [])
             )
             body_parts.extend(
                 _render_paragraph_html(
@@ -178,8 +196,7 @@ def _build_epub_from_chapters(
                 )
             )
         body_parts.extend(
-            f'<div class="fb2-image"><img src="{escape(href, quote=True)}" alt=""/></div>'
-            for href in images_by_position.get(len(paragraphs), [])
+            _fb2_image_div(href, alt) for href, alt in images_by_position.get(len(paragraphs), [])
         )
         fname = f"ch{c['index']}.xhtml"
         content = (
@@ -188,7 +205,6 @@ def _build_epub_from_chapters(
             f"<body>{''.join(body_parts)}</body></html>"
         )
         chapters.append(EpubChapter(fname, ch_title, content))
-        entry = EpubTocEntry(fname, ch_title)
         heading = next(
             (
                 segment
@@ -197,17 +213,8 @@ def _build_epub_from_chapters(
             ),
             None,
         )
-        if heading is None:
-            # Untitled prefaces are navigation entries, not parents of later headings.
-            toc.append(entry)
-            toc_stack.clear()
-            continue
-        level = _heading_level(ch, heading)
-        while toc_stack and toc_stack[-1][0] >= level:
-            toc_stack.pop()
-        siblings = toc_stack[-1][1] if toc_stack else toc
-        siblings.append(entry)
-        toc_stack.append((level, entry.children))
+        level = None if heading is None else _heading_level(ch, heading)
+        _push_toc_entry(toc, toc_stack, EpubTocEntry(fname, ch_title), level)
 
     write_epub(
         out_path,
@@ -222,6 +229,31 @@ def _build_epub_from_chapters(
     return out_path
 
 
+def _push_toc_entry(
+    toc: list[EpubTocEntry],
+    toc_stack: list[tuple[int, list[EpubTocEntry]]],
+    entry: EpubTocEntry,
+    level: int | None,
+) -> None:
+    """Place one TOC entry at its heading level; None marks an untitled preface."""
+    if level is None:
+        # Untitled prefaces are navigation entries, not parents of later headings.
+        toc.append(entry)
+        toc_stack.clear()
+        return
+    while toc_stack and toc_stack[-1][0] >= level:
+        toc_stack.pop()
+    siblings = toc_stack[-1][1] if toc_stack else toc
+    siblings.append(entry)
+    toc_stack.append((level, entry.children))
+
+
+def _rendered_toc_level(rendered: str) -> int | None:
+    """Return a chapter's original heading level from its rendered template."""
+    heading = BeautifulSoup(rendered, "html.parser").find(["h1", "h2", "h3", "h4", "h5", "h6"])
+    return int(heading.name[1]) if heading is not None else None
+
+
 def _build_epub_from_html_templates(
     store: AssembleStore,
     source_path: str,
@@ -231,6 +263,7 @@ def _build_epub_from_html_templates(
     order: str = "target_first",
     preserve_source_style: bool = False,
     about: AboutPage | None = None,
+    warnings: list[str] | None = None,
 ) -> str:
     """Build EPUB from rendered HTML templates and package their media resources."""
     manifest = store.load_manifest()
@@ -247,6 +280,7 @@ def _build_epub_from_html_templates(
     )
     chapters: list[EpubChapter] = []
     toc: list[EpubTocEntry] = []
+    toc_stack: list[tuple[int, list[EpubTocEntry]]] = []
     packaged_assets: dict[str, tuple[str, bytes]] = {}
 
     for chapter_meta in manifest["chapters"]:
@@ -259,11 +293,15 @@ def _build_epub_from_html_templates(
             preserve_source_style=preserve_source_style,
             prefer_native=True,
         )
+        chapter_warnings: list[str] = []
         rendered, assets = _package_html_resources(
             rendered,
             source_dir=os.path.dirname(os.path.abspath(source_path)),
             href_prefix="assets",
+            warnings=chapter_warnings,
         )
+        if warnings is not None:
+            warnings.extend(f"chapter {chapter.index}: {item}" for item in chapter_warnings)
         packaged_assets.update(assets)
         filename = f"ch{chapter.index}.xhtml"
         html_open = _html_open_tag(
@@ -278,7 +316,9 @@ def _build_epub_from_html_templates(
             f"{body_open}{rendered}</body></html>"
         )
         chapters.append(EpubChapter(filename, chapter_title, content))
-        toc.append(EpubTocEntry(filename, chapter_title))
+        _push_toc_entry(
+            toc, toc_stack, EpubTocEntry(filename, chapter_title), _rendered_toc_level(rendered)
+        )
 
     resources = [
         EpubResource(href, media_type, payload)

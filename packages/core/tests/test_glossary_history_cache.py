@@ -86,7 +86,7 @@ def test_deferred_audit_is_count_only_and_not_repeated(tmp_path, caplog):
     assert len(events) == 1
     assert "PRIVATE" not in json.dumps(diagnostic)
     assert "PRIVATE" not in json.dumps(events)
-    assert "PRIVATE" not in caplog.text
+    assert not any("PRIVATE" in message for message in caplog.messages)
     assert caplog.records
     caplog.clear()
     resumed, client = extractor([])

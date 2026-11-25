@@ -8,7 +8,7 @@ from threading import Lock
 
 from wenyi_core.llm.router import RoutedLLMClient
 
-from .diagnostics import current
+from .diagnostics import current, local_diagnostics_enabled, record_local_event
 
 
 class DesktopLLMClient(RoutedLLMClient):
@@ -23,8 +23,10 @@ class DesktopLLMClient(RoutedLLMClient):
         super()._emit_event(event, **data)
         reporter = self._diagnostics
         if reporter is None:
+            if local_diagnostics_enabled():
+                record_local_event(event, data)
             return
-        fields = {**self._diagnostic_context}
+        fields: dict[str, object] = {**self._diagnostic_context}
         call_id = data.get("call_id")
         if isinstance(call_id, str):
             fields["call_ref"] = reporter.reference(call_id)

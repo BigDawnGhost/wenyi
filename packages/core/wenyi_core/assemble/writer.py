@@ -6,7 +6,10 @@ epub_writer.
 
 from __future__ import annotations
 
+import json
+import logging
 import os
+from pathlib import Path
 from typing import Literal
 
 from ..i18n.policy.models import PolicyContext, PolicyPlan
@@ -37,6 +40,26 @@ from .writer_common import (
 
 __all__ = ["assemble"]
 
+logger = logging.getLogger(__name__)
+
+
+def _write_warnings_sidecar(out_path: str, warnings: list[str]) -> None:
+    """Write the export warning list beside the artifact so export results stay queryable."""
+    sidecar = Path(f"{out_path}.warnings.json")
+    sidecar.write_text(json.dumps(warnings, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def validate_output_path(
+    store: AssembleStore, manifest: dict, source: str, destination: str
+) -> None:
+    """Protect both the original and the derived template, including staged exports."""
+    protected = {os.path.realpath(source)}
+    if MINERU_EPUB_DIGEST in (manifest.get("meta") or {}):
+        cached = pdf_cache_epub_path(store.source_dir, manifest["source_sha256"])
+        protected.add(os.path.realpath(cached))
+    if os.path.realpath(destination) in protected:
+        raise ValueError("--out must not point at the source file; choose a different output path")
+
 
 def assemble(
     store: AssembleStore,
@@ -51,6 +74,7 @@ def assemble(
     quote_style: QuoteStyle = "preserve",
     babeldoc_timeout: float = 600.0,
     language_policy: PolicyPlan | None = None,
+    warnings: list[str] | None = None,
 ) -> str:
     """Generate translated output, defaulting to PDF for BabelDOC state and EPUB otherwise.
     EPUB input reuses the original layout and resources; template-free input produces a
@@ -61,6 +85,8 @@ def assemble(
     left to right in that order. preserve_source_style reuses
     original styles instead of muted CSS in EPUB/HTML or plain source text in DOCX.
     about_page appends the translation about page.
+    warnings collects href resolution failures encountered while building EPUB output; when
+    any are recorded they are logged and written to '<out>.warnings.json' beside the artifact.
     """
     if out_format is not None and out_format not in _OUT_EXT:
         supported = " / ".join(_OUT_EXT)
@@ -100,16 +126,12 @@ def assemble(
     m = view.load_manifest()
     template_source = source_path
     meta = m.get("meta") or {}
-    protected_paths = {os.path.realpath(source_path)}
-    if MINERU_EPUB_DIGEST in meta:
-        cached = pdf_cache_epub_path(store.source_dir, m["source_sha256"])
-        protected_paths.add(os.path.realpath(cached))
-        if out_format in {"epub", "html"}:
-            template_source = cached_epub_source(
-                store.source_dir, m["source_sha256"], meta[MINERU_EPUB_DIGEST]
-            )
-    if out_path is not None and os.path.realpath(out_path) in protected_paths:
-        raise ValueError("--out must not point at the source file; choose a different output path")
+    if out_path is not None:
+        validate_output_path(store, m, source_path, out_path)
+    if MINERU_EPUB_DIGEST in meta and out_format in {"epub", "html"}:
+        template_source = cached_epub_source(
+            store.source_dir, m["source_sha256"], meta[MINERU_EPUB_DIGEST]
+        )
     # EPUB and PDF writers project all chapters before opening output or making
     # a bridge request. Prewarming their view would deep-copy the same chapters twice.
     if out_format not in {"epub", "pdf"}:
@@ -159,6 +181,7 @@ def assemble(
             bilingual=bilingual,
             order=order,
             preserve_source_style=preserve_source_style,
+            source_path=source_path,
         )
     out_path = out_path or _default_out(
         source_path, "epub", "", bilingual=bilingual, target_lang=target_lang
@@ -175,7 +198,8 @@ def assemble(
         writer = _build_epub_from_html_templates
     else:
         writer = _build_epub_from_chapters
-    return writer(
+    collected_warnings = warnings if warnings is not None else []
+    result = writer(
         view,
         template_source,
         out_path,
@@ -183,4 +207,10 @@ def assemble(
         order=order,
         preserve_source_style=preserve_source_style,
         about=about,
+        warnings=collected_warnings,
     )
+    if collected_warnings:
+        for message in collected_warnings:
+            logger.warning("%s", message)
+        _write_warnings_sidecar(out_path, collected_warnings)
+    return result

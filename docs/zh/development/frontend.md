@@ -158,7 +158,6 @@ px，而非 rem/em。视口约束可用视口单位；相对尺寸、动态进�
 | `runtime-placeholder` | Desktop 运行时 pending/closing 门 |
 | `route-placeholder` | 安静的内容区路由门 |
 | `disclosure-summary`、`disclosure-chevron` | 原生折叠详情样式 |
-| `glass-bar` | 悬浮操作栏的玻璃底：半透明底色加背景模糊 |
 
 这些是编写约定，不代表每个依赖或已有 arbitrary utility 都已完全采用 px。
 两端保持共享主题 token 及减少动态效果行为，不通过把样式复制到 app 绕过共享规则。
@@ -172,7 +171,7 @@ Radix Select 的 Portal 选项必须能在弹窗上方使用。不要改用会�
 原生 `showModal()`。共享背景遮罩使用 2px 模糊。
 
 [NotificationToaster](../../../packages/ui/src/components/NotificationToaster.tsx#L5)
-只在壳层挂载一次，位于可滚动路由内容之外。body Portal 的通知栈固定在视口右上角，
+只在壳层挂载一次，位于可滚动路由内容之外。body Portal 的通知栈固定在底部，沿内容区居中，
 高于弹窗/下拉框，并带可用的关闭控件。异步反馈不跟随最后点击的按钮；滚动和无关点击
 不能改变其位置。
 
@@ -182,7 +181,9 @@ Radix Select 的 Portal 选项必须能在弹窗上方使用。不要改用会�
 
 ## 两端验证
 
-使用 Node 22、pnpm 9，通过 `pnpm install --frozen-lockfile` 安装依赖。
+使用 Node 26 LTS 和仓库根目录 [`package.json`](../../../package.json) 的
+`packageManager` 字段固定的 pnpm 9 版本。Node 26 不再内置 Corepack；通过 npm 或工具
+版本管理器单独安装 pnpm 后，再运行 `pnpm install --frozen-lockfile`。
 尚无 Playwright Chromium 时执行 `pnpm -C apps/web exec playwright install chromium`。
 从仓库根目录运行：
 

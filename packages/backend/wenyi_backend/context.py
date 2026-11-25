@@ -13,12 +13,23 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, BinaryIO, ContextManager, Protocol, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    BinaryIO,
+    ContextManager,
+    Literal,
+    Protocol,
+    TypeVar,
+    runtime_checkable,
+)
 
 from fastapi import WebSocket
 from wenyi_core.config import Config
 from wenyi_core.llm.base import LLMClient
+from wenyi_core.models.document import Chapter
 from wenyi_core.pdf_bridge.connection import BridgeResolver
+from wenyi_core.storage.chapter_reading import ChapterDigestRow
 from wenyi_core.storage.protocol import Storage
 
 from .live_statistics import StatisticsCache
@@ -32,10 +43,18 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class BackendStorage(Storage, Protocol):
-    """Project state with the session and per-export locks required by backend workers."""
+    """Project state with the additional reads and locks required by the backend."""
 
     def lock(self, *, blocking: bool = True) -> ContextManager[None]: ...
     def export_lock(self, export_id: int, *, blocking: bool = True) -> ContextManager[None]: ...
+    def save_chapter(
+        self, chapter: Chapter, *, revision_kind: Literal["manual"] | None = None
+    ) -> None: ...
+    def set_chapter_review_status(self, ci: int, status: str) -> None: ...
+    def load_segment_history(self, ci: int, si: int) -> list[dict]: ...
+    def read_chapter_digests(self) -> list[ChapterDigestRow]:
+        """Read digests in inventory order, raising ChapterNotFound for missing chapters."""
+        ...
 
 
 class Repository(ProjectCatalog, JobCatalog, Protocol):
@@ -69,14 +88,26 @@ class SettingsStore(Protocol):
     def project_configs(self, connection: Any) -> list[tuple[str, dict]]: ...
 
 
+@dataclass(frozen=True)
+class ExportAdmission:
+    export_id: int
+    job_id: int
+    run_id: str
+    created: bool
+
+
 class ExportStore(Protocol):
     def list_exports(self, pid: str) -> list[dict]: ...
     def admit_export(
-        self, pid: str, fmt: str, options: dict, run_id: str, snapshot: dict
-    ) -> tuple[int, int]: ...
+        self, pid: str, fmt: str, options: dict, run_id: str, snapshot: dict, *, source: dict
+    ) -> ExportAdmission: ...
     def fail_export_admission(self, job_id: int, error: str) -> Any: ...
     def open_export(self, pid: str, export_id: int) -> tuple[BinaryIO, Path]: ...
-    def publish_export(self, pid: str, export_id: int, output: str) -> None: ...
+    def publish_export(
+        self, pid: str, export_id: int, output: str, *, job_id: int | None = None
+    ) -> None:
+        """Publish the export and complete its job in one catalog transaction."""
+        ...
 
 
 class SourcePaths(Protocol):
@@ -94,10 +125,13 @@ class Telemetry(Protocol):
     async def relay(self, websocket: WebSocket, pid: str) -> None: ...
 
 
+_WorkflowResult = TypeVar("_WorkflowResult")
+
+
 class WorkflowDispatcher(Protocol):
     """Run a synchronous workflow with its context, retaining ownership until it exits."""
 
-    async def __call__(self, operation: Callable[[], None], /) -> None: ...
+    async def __call__(self, operation: Callable[[], _WorkflowResult], /) -> _WorkflowResult: ...
 
 
 @dataclass(frozen=True)
@@ -142,6 +176,9 @@ class BackendContext:
     # Optional host hooks for automatic resume after resumable provider outages.
     schedule_auto_resume: Callable[[Any, int, int, str], None] | None = None
     cancel_auto_resume: Callable[[str], None] | None = None
+    # Auth policy: with api_token set, bearer checks stay on unless the host
+    # explicitly opted out. Default True keeps deployments fail-closed.
+    require_token: bool = True
 
 
 _context: ContextVar[BackendContext] = ContextVar("wenyi_backend_context")

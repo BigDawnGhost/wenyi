@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import mimetypes
+from functools import cache
 from urllib.parse import quote
 from uuid import uuid4
 
@@ -33,10 +34,19 @@ def list_exports(pid: str) -> list[dict]:
     return current_context().exports.list_exports(pid)
 
 
-def _resolve_input(project: dict, body: ExportRequest) -> tuple[str, dict]:
+def _resolve_input(project: dict, body: ExportRequest) -> tuple[str, dict, dict]:
+    @cache
+    def config():
+        return effective_config(project)
+
     store = storage_for(project["id"])
     try:
-        return resolve_export(project, export_input(project, store, effective_config), body)
+        fmt, options = resolve_export(
+            project, export_input(project, store, lambda _: config()), body
+        )
+        return fmt, options, runtime_document(config())
+    except ValueError as error:
+        raise ApiError(INVALID_CONFIGURATION, 422, str(error)) from None
     finally:
         store.close()
 
@@ -45,17 +55,14 @@ async def enqueue_export(pid: str, body: ExportRequest, *, kind: str = "export")
     project = require_project(pid)
     # Loading an uninitialized book's saved parse can be expensive. Keep the HTTP
     # event loop free and open/close the adapter on the same worker thread.
-    fmt, options = await asyncio.to_thread(_resolve_input, project, body)
-    try:
-        snapshot = runtime_document(effective_config(project))
-    except ValueError as error:
-        # Corrupt or legacy-saved project config must read as invalid_configuration like
-        # the config endpoints, not as a bare 500 (audit Y-4/E-3).
-        raise ApiError(INVALID_CONFIGURATION, 422, str(error)) from None
-    run_id = uuid4().hex
+    fmt, options, snapshot = await asyncio.to_thread(_resolve_input, project, body)
+    source = {
+        field: project.get(field)
+        for field in ("source_path", "source_sha256", "source_meta", "fmt", "initialized")
+    }
     exports = current_context().exports
     try:
-        export_id, job_id = exports.admit_export(pid, fmt, options, run_id, snapshot)
+        admission = exports.admit_export(pid, fmt, options, uuid4().hex, snapshot, source=source)
     except (ApiError, StarletteHTTPException):
         # admit_export already carries a code; re-raise it untouched instead of
         # letting the generic handler relabel it as a queue failure.
@@ -64,6 +71,10 @@ async def enqueue_export(pid: str, body: ExportRequest, *, kind: str = "export")
         raise ApiError(
             QUEUE_UNAVAILABLE, 503, "Export queue is unavailable; retry the operation"
         ) from error
+    run_id, export_id = admission.run_id, admission.export_id
+    response = {"job_id": run_id, "project_id": pid, "kind": kind, "export_id": export_id}
+    if not admission.created:
+        return response
     try:
         job = await enqueue(
             "run_export",
@@ -73,8 +84,8 @@ async def enqueue_export(pid: str, body: ExportRequest, *, kind: str = "export")
             export_id=export_id,
             fmt=fmt,
             **(
-                {"parsed_source_sha256": project["source_sha256"]}
-                if not project.get("initialized")
+                {"parsed_source_sha256": source["source_sha256"]}
+                if not source["initialized"]
                 else {}
             ),
             **options,
@@ -82,11 +93,11 @@ async def enqueue_export(pid: str, body: ExportRequest, *, kind: str = "export")
         if job is None:
             raise RuntimeError("The queue did not accept this export")
     except Exception as error:
-        exports.fail_export_admission(job_id, str(error))
+        exports.fail_export_admission(admission.job_id, str(error))
         raise ApiError(
             QUEUE_UNAVAILABLE, 503, "Export queue is unavailable; retry the operation"
         ) from error
-    return {"job_id": run_id, "project_id": pid, "kind": kind, "export_id": export_id}
+    return response
 
 
 @router.post("", response_model=AssembleEnqueued)

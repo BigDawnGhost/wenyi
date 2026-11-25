@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 from wenyi_backend.context import current_context
@@ -27,7 +29,7 @@ class LocationAnswer(BaseModel):
 
 
 def _backend() -> LocalBackend:
-    return current_context().repository
+    return cast(LocalBackend, current_context().repository)
 
 
 @router.post("/admit", response_model=LocationAnswer)

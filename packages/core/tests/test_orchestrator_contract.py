@@ -10,6 +10,7 @@ import unittest
 from contextlib import contextmanager
 from unittest.mock import MagicMock, Mock, patch
 
+import pytest
 from wenyi_core.config import Config
 from wenyi_core.pipeline.orchestrator import Orchestrator
 
@@ -91,7 +92,7 @@ class TestOrchestratorContract(unittest.TestCase):
     def test_removed_report_step_is_rejected_before_state_access(self):
         orch = self._orchestrator()
 
-        with self.assertRaisesRegex(ValueError, "Unknown workflow steps: report"):
+        with pytest.raises(ValueError, match="Unknown workflow steps: report"):
             orch.run_steps("novel.txt", {"translate", "report"})
 
         self.preparation.prepare.assert_not_called()
@@ -133,7 +134,7 @@ class TestOrchestratorContract(unittest.TestCase):
         self.preparation.prepare.return_value = store
         self.preparation.activate.return_value = {"chapters": [{"index": 0}]}
 
-        with self.assertRaisesRegex(ValueError, "Chapter index 7 does not exist"):
+        with pytest.raises(ValueError, match="Chapter index 7 does not exist"):
             orch.run("novel.txt", only_chapter=7)
 
         self.preparation.activate.assert_not_called()

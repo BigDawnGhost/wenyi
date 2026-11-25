@@ -69,9 +69,9 @@ def test_final_provider_failure_and_retry_diagnostics_are_safe(caplog, status, a
     assert SECRET not in str(caught.value)
     assert SECRET not in "".join(traceback.format_exception(caught.value))
     assert SECRET not in json.dumps(events)
-    assert SECRET not in caplog.text
+    assert not any(SECRET in message for message in caplog.messages)
     assert "fake-other-connection-key" not in json.dumps(events)
-    assert "fake-other-connection-key" not in caplog.text
+    assert not any("fake-other-connection-key" in message for message in caplog.messages)
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
     assert isinstance(caught.value, ProviderRequestError)
@@ -105,8 +105,8 @@ def test_failed_event_sink_cannot_log_provider_context(caplog):
     with pytest.raises(ProviderRequestError):
         client.complete([], operation="translation.body")
     assert len(calls) == 2
-    assert "Failed to write LLM event" in caplog.text
-    assert SECRET not in caplog.text
+    assert any("Failed to write LLM event" in message for message in caplog.messages)
+    assert not any(SECRET in message for message in caplog.messages)
 
 
 @pytest.mark.parametrize("method", ["capture_events", "observe_events"])
@@ -121,8 +121,8 @@ def test_observer_cannot_log_provider_context(caplog, method):
     with getattr(client, method)(observer), pytest.raises(ProviderRequestError):
         client.complete([], operation="translation.body")
     assert len(calls) == 2
-    assert "Failed to write LLM event" in caplog.text
-    assert SECRET not in caplog.text
+    assert any("Failed to write LLM event" in message for message in caplog.messages)
+    assert not any(SECRET in message for message in caplog.messages)
     assert SECRET not in json.dumps(events)
     failure = next(data for event, data in events if event == "llm_request_failed")
     assert failure["error_category"] == "provider_unavailable"
@@ -212,10 +212,10 @@ def test_review_persists_only_safe_errors(tmp_path, caplog):
     assert len(calls) == 2
     artifacts = [path for path in tmp_path.rglob("*.json") if "review" in str(path)]
     assert artifacts
-    documents = "\n".join(path.read_text() for path in artifacts)
+    documents = "\n".join(path.read_text(encoding="utf-8") for path in artifacts)
     assert "Model request failed:" in documents
     assert '"interrupted"' in documents
     assert SECRET not in documents
     for path in tmp_path.rglob("*.jsonl"):
-        assert SECRET not in path.read_text()
-    assert SECRET not in caplog.text
+        assert SECRET not in path.read_text(encoding="utf-8")
+    assert not any(SECRET in message for message in caplog.messages)

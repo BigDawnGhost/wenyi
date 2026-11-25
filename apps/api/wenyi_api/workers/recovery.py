@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Protocol, runtime_checkable
 
 from arq.jobs import Job, JobStatus
@@ -9,6 +10,7 @@ from wenyi_backend.context import BackendStorage, current_context
 
 from .. import dal
 from ..db import get_pool
+from ..export_retention import recover_export_cleanup
 
 _REMOTE_ACTIVE = {JobStatus.queued, JobStatus.deferred, JobStatus.in_progress}
 
@@ -39,10 +41,10 @@ async def recover_jobs(ctx: dict) -> None:
         export_id_i: int | None = None
         if is_export:
             # Validated above: export_id is a positive int.
-            assert isinstance(export_id, int)
+            assert isinstance(export_id, int), f"expected int export_id, got {export_id!r}"
             export_id_i = export_id
         storage = current_context().storage_for(pid)
-        assert isinstance(storage, RecoveryStorage)
+        assert isinstance(storage, RecoveryStorage), "recovery worker requires RecoveryStorage"
         lock = (
             storage.export_lock(export_id_i, blocking=False)
             if export_id_i is not None
@@ -64,7 +66,7 @@ async def recover_jobs(ctx: dict) -> None:
                     message = (
                         "Export worker stopped before completion; create a new export to retry"
                     )
-                    assert export_id_i is not None
+                    assert export_id_i is not None, "export error path lost its export id"
                     dal.set_job_status(job_id, "error", error=message)
                     dal.set_export_status(export_id_i, "error", error=message)
                     storage.log_event(
@@ -82,3 +84,4 @@ async def recover_jobs(ctx: dict) -> None:
             continue
         finally:
             storage.close()
+    await asyncio.to_thread(recover_export_cleanup, get_pool(), current_context().data_dir)

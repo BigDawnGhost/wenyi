@@ -193,6 +193,8 @@ def test_old_render_call_and_frozen_template_default_source_context_to_empty():
     for frozen in [None, plan]:
         text = prompts.render(
             "polisher_user",
+            src="ja",
+            tgt="zh",
             plan=frozen,
             glossary="",
             style="",
@@ -203,5 +205,22 @@ def test_old_render_call_and_frozen_template_default_source_context_to_empty():
         assert "$source_context" not in text
         assert "旧接口" in text
     frozen = replace(plan, templates=(("polisher_user", "frozen:$source_context"),))
-    assert prompts.render("polisher_user", plan=frozen) == "frozen:"
-    assert prompts.render("polisher_user", plan=frozen, source_context="quoted") == "frozen:quoted"
+    assert (
+        prompts.render(
+            "polisher_user",
+            src="ja",
+            tgt="zh",
+            plan=frozen,
+        )
+        == "frozen:"
+    )
+    assert (
+        prompts.render(
+            "polisher_user",
+            src="ja",
+            tgt="zh",
+            plan=frozen,
+            source_context="quoted",
+        )
+        == "frozen:quoted"
+    )

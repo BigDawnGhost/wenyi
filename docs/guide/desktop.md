@@ -40,7 +40,7 @@ Open **Settings → Models & connections**, add or edit a provider, and enter it
 
 Wenyi does not write secrets to YAML/JSON, SQLite, project files, browser storage, or logs. Project backups contain credential references, not the secrets held by the system vault or session memory.
 
-For model registration, fetching names, and **Test connection**, see [Choose models and workflow](workspace.md#choose-models-and-workflow). Fetching names uses no model tokens; **Test connection sends live, potentially billable model requests**. **Validate configuration** checks the current draft without sending a model request.
+For model registration, fetching names, and **Test connection**, see [Choose models and workflow](workspace.md#choose-models-and-workflow). Fetching names uses no model tokens; **Test connection sends live, potentially billable model requests**.
 
 ### MinerU PDF parsing key
 
@@ -116,11 +116,25 @@ Before installing, finish or pause active project tasks, wait for exports, saves
 
 Supported release builds offer in-app installation on Windows for the current user, macOS, and Linux **AppImage**. macOS updates keep the installed architecture. Windows all-users and Linux `.deb`/`.rpm` installations update through downloaded packages. Older or unconfigured builds may require a manual update. A network/check failure does not prevent continuing to use Desktop.
 
-An in-app installation first stops writes and the engine, then backs up **all registered project directories** and `catalog.sqlite3` to `<data-root>/backups/<version>-<timestamp>/`. The backup includes any database WAL/SHM files and a `MANIFEST.json` recording original locations and file verification data. It does not copy earlier backups, export credential secrets, or replace your regular backups.
+An in-app installation first stops writes and the engine, then backs up **all registered project directories** and `catalog.sqlite3` to `<data-root>/backups/<version>-<timestamp>/`. The backup includes existing SQLite `-wal`, `-shm` and `-journal` files and a `MANIFEST.json` recording original locations and verification data. It does not copy earlier backups, export credential secrets, or replace your regular backups.
 
 An unavailable project directory, insufficient disk space, unsafe link, or failed copy/verification blocks installation. Reconnect the missing drive or fix the reported problem and retry. If update preparation cannot be canceled cleanly, quit and reopen Desktop instead of assuming writes have resumed.
 
 A manually run installer neither creates this snapshot nor requires a historical backup marker. Back up current data yourself before replacing the program; prefer updating inside Wenyi.
+
+### Restore a pre-upgrade snapshot
+
+Wenyi never overwrites workspace data automatically when startup fails. An in-app update identifies one verified snapshot for that installation attempt. The first successful startup retires its recovery eligibility. A historical snapshot or manual installation does not qualify.
+
+If the updated release cannot open your workspace and reports that upgrade recovery is needed:
+
+1. Quit Wenyi completely, including its tray app and any other copies or standalone engines. Close SQLite tools or other software using the data. Keep a separate copy of the data root and any external libraries before continuing.
+2. In a terminal, locate the **updated release's** `wenyi-engine` inside its `sidecar/wenyi-engine/` resources. On Windows this is `sidecar\wenyi-engine\wenyi-engine.exe` under the installation directory; on macOS it is `Wenyi.app/Contents/Resources/sidecar/wenyi-engine/wenyi-engine`. On Linux, extract the updated AppImage from an empty working directory with `./Wenyi.AppImage --appimage-extract` (use the actual release filename), and locate `sidecar/wenyi-engine/wenyi-engine` under `squashfs-root`. In the commands below, `wenyi-engine` means this executable's full, quoted path, not a command on `PATH`. In PowerShell, use `& "path\to\wenyi-engine.exe"` to run it.
+3. Run `wenyi-engine --data-dir "DATA_ROOT" --recover-upgrade` to print the exact snapshot ID. Replace `DATA_ROOT` with the affected [data root](#data-locations-and-backups), not the library or backups directory. If no snapshot is reported, do not select an older one by name; use a separate [manual backup](#data-locations-and-backups) or get help.
+4. Run `wenyi-engine --data-dir "DATA_ROOT" --recover-upgrade "SNAPSHOT_ID"` with that ID to restore. This restores the catalog and its backed-up projects as a set and preserves the previous live files in `<data-root>/upgrade-recovery/<snapshot-id>/preserved/`. If interrupted, Wenyi refuses to open the workspace until you rerun the **same command** successfully. Do not move the snapshot, preserved files, or recovery marker during recovery.
+5. After the command succeeds, reopen Wenyi. If the installed release still cannot read the restored data, keep the restored files and the preserved copy, and use a compatible Wenyi release.
+
+The command refuses the **entire** recovery if any snapshotted project is in an external library or a required path is unsafe. The snapshot is kept for manual recovery; do not copy just `catalog.sqlite3` into the live workspace. Preserve all complete SQLite sets and project directories and seek help with [manual recovery](#data-locations-and-backups). Retention uses verified snapshot dates and keeps snapshots used in recovery and their preserved data; it does not permanently erase expired snapshots.
 
 ### Windows uninstallation
 

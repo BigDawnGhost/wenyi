@@ -51,7 +51,8 @@ wenyi models list
 wenyi languages
 ```
 
-缺少配置时，CLI 会创建带注释的 `config.yaml`，帮助和版本命令也会执行此检查。
+默认位置的 `config.yaml` 缺失时，CLI 会创建带注释的配置文件，帮助和版本命令也会执行此检查。
+显式指定的 `--config` 路径必须已存在：文件缺失时 CLI 会报配置错误并退出，不会自动创建。
 `models list` 只预览实际模型路由，不发送请求。
 翻译前检查提供商、语言、流程与输出设置。
 
@@ -257,6 +258,10 @@ wenyi inspect-run book.epub
 均不能续跑。需要全新翻译时，选择新的 `paths.state_dir`；
 不要只为试另一项设置而删除旧状态。CLI、Web 和 Desktop 不共享项目状态。
 
+CLI 新任务会缩短过长的书籍目录名。已有的完整旧目录名保持不变，照常使用原文和原目标语言配置即可。
+如果所选目标语言的新旧目录同时存在，Wenyi 会停止，不会自动选择或合并。
+请先备份两份目录，再在配置的状态根目录下只保留要继续使用的那份。
+
 Ctrl+C 会协作式停止排队请求与重试等待；正在执行的请求可能完成或等待到提供商超时。
 强杀可能丢失最后未保存的工作或用量，优先正常中断。
 
@@ -446,7 +451,7 @@ CLI 会拒绝与源文件、配置及显式 `--out` 路径冲突。
 
 | 文件／状态 | 字段与含义 |
 |---|---|
-| 运行中进度 | `status: "running"`、`done`、可为空的 `total`、`label`；计数只描述当前阶段，不是全流程百分比。 |
+| 运行中进度 | `status: "running"`、`done`、可为空的 `total`、`label`；计数只描述当前阶段，不是全流程百分比。可选的 `payload` 对象携带当前进度经白名单筛选的结构化定位字段（如 `chapter`、`batch`、`batch_size`）；当前阶段没有定位信息时省略该字段。 |
 | 预检前结果 | `status: "running"`、空 `outputs`，替换旧回执。 |
 | 成功结果 | `status: "success"`、`source_sha256`、绝对 `state_dir`；`outputs` 含绝对 `path`、字节 `size` 和 `sha256`。 |
 | 失败结果 | `status: "failed"`、空 `outputs` 和通用 `error`；详情在终端／日志中。 |

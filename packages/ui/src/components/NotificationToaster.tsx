@@ -43,26 +43,9 @@ function useSidebarWidth() {
   return width;
 }
 
-/** The action bar is rendered by its page, not by the shell. */
-function useActionBarPresence() {
-  const [present, setPresent] = useState(false);
-  useEffect(() => {
-    const read = () => setPresent(Boolean(document.querySelector('[data-slot="settings.actions"]')));
-    read();
-    const observer = new MutationObserver(read);
-    observer.observe(document.body, { childList: true, subtree: true });
-    return () => observer.disconnect();
-  }, []);
-  return present;
-}
-
 /** Mount once in the shared shell, outside the scrolling route content. */
 export function NotificationToaster() {
   const { theme } = useTheme();
-  // Only the settings page floats an action bar over the bottom edge, so only
-  // there does the stack need to clear it; elsewhere the offset would leave a
-  // toast hovering well above the corner for no reason.
-  const barVisible = useActionBarPresence();
   const sidebarWidth = useSidebarWidth();
   // Sonner hard-codes two behaviours that its props do not cover, both of which
   // put it out of step with the rest of the app. Publish them as a style element:
@@ -97,15 +80,9 @@ export function NotificationToaster() {
       }}
       richColors
       closeButton
-      // Lower centre, sharing a centre line with the floating action bar: the bar
-      // sits at the middle of the content pane, so the stack is shifted by half
-      // the sidebar to match. When the bar is present the stack clears it; when
-      // it is not, the stack sits at the ordinary corner distance.
       position="bottom-center"
-      offset={barVisible ? 92 : 24}
-      // Cap the stack. Pinned above the action bar, every extra toast grows the
-      // fan the stack opens into, and repeating an action that reports each time
-      // fills the whole column. Three is the shape Sonner is designed around.
+      offset={24}
+      // Cap the stack so repeated notifications do not fill the content pane.
       visibleToasts={3}
       // Gaps in the stack should not swallow clicks aimed at the page beneath.
       className="pointer-events-none z-[200]"

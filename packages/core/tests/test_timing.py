@@ -107,7 +107,7 @@ def timed_book(tmp_path, monkeypatch):
         "wenyi_cli.commands.context.CommandContext.load_config", lambda self: config
     )
 
-    def progress(done, total, label):
+    def progress(done, total, label, payload=None):
         now[0] += 2.0
 
     orch = Orchestrator(config, FakeClient(handler=routing_handler))

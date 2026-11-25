@@ -29,7 +29,7 @@ async function desktop(page: Page, pending = false) {
   }, { origin, token, pending });
 }
 
-test("Desktop settings replaces app navigation and keeps structured drafts between categories", async ({ page }) => {
+test("Desktop settings replaces app navigation and persists workflow edits across reloads", async ({ page }) => {
   await desktop(page);
   await fakeApi(page, {}, origin);
   await page.goto("/");
@@ -48,6 +48,7 @@ test("Desktop settings replaces app navigation and keeps structured drafts betwe
   await expect(nav).toHaveCount(0);
   await page.getByRole("link", { name: "Workflow", exact: true }).click();
   await page.getByLabel("Polishing", { exact: true }).uncheck();
+  await expect(page.getByText("Global settings saved", { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Models & connections", exact: true }).click();
   await page.getByRole("button", { name: "Edit provider deepseek" }).click();
   await page.getByLabel("API provider", { exact: true }).click();
@@ -60,7 +61,8 @@ test("Desktop settings replaces app navigation and keeps structured drafts betwe
   await expect(page.getByLabel("Polishing", { exact: true })).not.toBeChecked();
   await page.reload();
   await expect(page).toHaveURL("/settings/workflow");
-  await expect(page.getByLabel("Polishing", { exact: true })).toBeChecked();
+  await expect(page.getByLabel("Polishing", { exact: true })).toBeEnabled();
+  await expect(page.getByLabel("Polishing", { exact: true })).not.toBeChecked();
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page).toHaveURL("/");
   await page.goto(`/projects/${pid}`);
@@ -556,6 +558,7 @@ const SHARED_RENDER_SMOKE: SharedRenderSmoke[] = [
   { module: "sidebar", route: "/", slot: "sidebar" },
   { module: "sidebar-motion", route: "/", slot: "sidebar" },
   { module: "style-editing", route: `/projects/${pid}/style`, slot: "page.header" },
+  { module: "tabs", route: "/tests/tabs-harness.html", role: "tablist" },
 ] as const;
 
 for (const route of new Set(SHARED_RENDER_SMOKE.map(smoke => smoke.route))) {

@@ -88,6 +88,58 @@ def test_explicit_origins_allow_credentials(monkeypatch):
         client.close()
 
 
+def test_require_token_env_flag_parses_fail_closed(monkeypatch):
+    from wenyi_api.config import _env_bool
+
+    monkeypatch.delenv("WENYI_REQUIRE_TOKEN", raising=False)
+    assert _env_bool("WENYI_REQUIRE_TOKEN", True) is True
+
+    for off_value in ("0", "false", "False", "FALSE", "no", "No", "off", "OFF", " off "):
+        monkeypatch.setenv("WENYI_REQUIRE_TOKEN", off_value)
+        assert _env_bool("WENYI_REQUIRE_TOKEN", True) is False, off_value
+
+    # Anything else, including a typo, must fail closed and keep auth enabled.
+    for on_value in ("1", "true", "yes", "on", "enable", "maybe", ""):
+        monkeypatch.setenv("WENYI_REQUIRE_TOKEN", on_value)
+        assert _env_bool("WENYI_REQUIRE_TOKEN", True) is True, on_value
+
+
+def test_require_token_opt_out_disables_bearer_enforcement(monkeypatch):
+    monkeypatch.setattr(
+        main,
+        "settings",
+        replace(main.settings, api_token="test-token", require_token=False),
+    )
+    application = main.create_app()
+
+    @application.get("/protected")
+    def protected():
+        return {"ok": True}
+
+    # Do not enter the lifespan: this test requires no database.
+    client = TestClient(application)
+    try:
+        assert client.get("/protected").status_code == 200
+    finally:
+        client.close()
+
+
+def test_require_token_defaults_stay_enforced(monkeypatch):
+    # Without an explicit opt-out the token check must stay on (fail-closed).
+    monkeypatch.setattr(main, "settings", replace(main.settings, api_token="test-token"))
+    application = main.create_app()
+
+    @application.get("/protected")
+    def protected():
+        return {"ok": True}
+
+    client = TestClient(application)
+    try:
+        assert client.get("/protected").status_code == 401
+    finally:
+        client.close()
+
+
 def test_chapter_title_edit_uses_api_authentication(monkeypatch):
     monkeypatch.setattr(main, "settings", replace(main.settings, api_token="test-token"))
     client = TestClient(main.create_app())

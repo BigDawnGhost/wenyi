@@ -28,119 +28,112 @@ toolchain's own standard-library notices are in `wenyi_core/_licenses/rust-std/`
 | `arbitrary` | `1.5.0` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-012), [`src/lib.rs#L1-L7`](#material-013) |
 | `base64` | `0.22.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-014) |
 | `bitflags` | `2.13.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-015), [`src/lib.rs#L1-L9`](#material-016) |
-| `block-buffer` | `0.10.4` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-017) |
-| `block-buffer` | `0.12.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-018) |
-| `block-padding` | `0.4.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-018) |
-| `brotli-decompressor` | `5.0.3` | `BSD-3-Clause/MIT` | [`LICENSE`](#material-010), [`src/context.rs#L5-L8`](#material-019), [`google-brotli`](#material-020) |
-| `cbc` | `0.2.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-021) |
-| `cfg-if` | `1.0.5` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-022) |
-| `chacha20` | `0.10.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-023), [`src/backends/neon.rs#L3-L5`](#material-024) |
-| `chardetng` | `1.0.0` | `Apache-2.0 OR MIT` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-025), [`COPYRIGHT`](#material-026), [`src/data.rs#L1-L2`](#material-027) |
-| `cipher` | `0.5.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-028) |
-| `const-oid` | `0.10.3` | `Apache-2.0 OR MIT` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-029) |
-| `core_detect` | `1.0.0` | `MIT/Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-030), [`README.md#L22-L24`](#material-031) |
-| `cpubits` | `0.1.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-032), [`src/lib.rs#L318-L318`](#material-033) |
-| `cpufeatures` | `0.2.17` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-034) |
-| `cpufeatures` | `0.3.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-029) |
-| `crc32fast` | `1.5.5` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-035), [`LICENSE-MIT`](#material-036) |
-| `crossbeam-deque` | `0.8.8` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-037) |
-| `crossbeam-epoch` | `0.9.21` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-037) |
-| `crossbeam-utils` | `0.8.23` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-037) |
-| `crypto-common` | `0.1.7` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-038) |
-| `crypto-common` | `0.2.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-039) |
+| `block-buffer` | `0.12.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-017) |
+| `block-padding` | `0.4.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-017) |
+| `brotli-decompressor` | `5.0.3` | `BSD-3-Clause/MIT` | [`LICENSE`](#material-010), [`src/context.rs#L5-L8`](#material-018), [`google-brotli`](#material-019) |
+| `cbc` | `0.2.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-020) |
+| `cfg-if` | `1.0.5` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-021) |
+| `chacha20` | `0.10.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-022), [`src/backends/neon.rs#L3-L5`](#material-023) |
+| `chardetng` | `1.0.0` | `Apache-2.0 OR MIT` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-024), [`COPYRIGHT`](#material-025), [`src/data.rs#L1-L2`](#material-026) |
+| `cipher` | `0.5.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-027) |
+| `const-oid` | `0.10.3` | `Apache-2.0 OR MIT` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-028) |
+| `core_detect` | `1.0.0` | `MIT/Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-029), [`README.md#L22-L24`](#material-030) |
+| `cpubits` | `0.1.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-031), [`src/lib.rs#L318-L318`](#material-032) |
+| `cpufeatures` | `0.3.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-028) |
+| `crc32fast` | `1.5.5` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-033), [`LICENSE-MIT`](#material-034) |
+| `crossbeam-deque` | `0.8.8` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-035) |
+| `crossbeam-epoch` | `0.9.21` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-035) |
+| `crossbeam-utils` | `0.8.23` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-035) |
+| `crypto-common` | `0.2.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-036) |
 | `derive_arbitrary` | `1.5.0` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-012) |
-| `digest` | `0.10.7` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-040) |
-| `digest` | `0.11.3` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-041) |
-| `ecb` | `0.2.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-042) |
-| `either` | `1.19.0` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-043) |
-| `encoding_rs` | `0.8.44` | `(Apache-2.0 OR MIT) AND BSD-3-Clause` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-025), [`COPYRIGHT`](#material-044), [`LICENSE-WHATWG`](#material-045) |
-| `equivalent` | `1.0.3` | `Apache-2.0 OR MIT` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-046) |
+| `digest` | `0.11.3` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-037) |
+| `ecb` | `0.2.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-038) |
+| `either` | `1.19.0` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-039) |
+| `encoding_rs` | `0.8.44` | `(Apache-2.0 OR MIT) AND BSD-3-Clause` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-024), [`COPYRIGHT`](#material-040), [`LICENSE-WHATWG`](#material-041) |
+| `equivalent` | `1.0.3` | `Apache-2.0 OR MIT` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-042) |
 | `fastrand` | `2.5.0` | `Apache-2.0 OR MIT` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-002), [`wyrand`](#material-009) |
-| `flate2` | `1.1.11` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-047), [`src/bufreader.rs#L1-L9`](#material-048) |
-| `foldhash` | `0.2.0` | `Zlib` | [`LICENSE`](#material-049) |
-| `generic-array` | `0.14.7` | `MIT` | [`LICENSE`](#material-050) |
-| `getrandom` | `0.4.3` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-051), [`LICENSE-MIT`](#material-052), [`src/backends/rdrand.rs#L52-L54`](#material-053) |
-| `hashbrown` | `0.17.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-054), [`abseil-swisstable`](#material-055) |
-| `heck` | `0.5.0` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-056) |
-| `html5ever` | `0.39.0` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-057), [`src/encoding.rs#L1-L8`](#material-058), [`html5ever-copyright`](#material-059), [`whatwg-html`](#material-060) |
-| `hybrid-array` | `0.4.15` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-061) |
-| `indexmap` | `2.14.2` | `Apache-2.0 OR MIT` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-062) |
-| `inout` | `0.2.6` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-063) |
+| `flate2` | `1.1.11` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-043), [`src/bufreader.rs#L1-L9`](#material-044) |
+| `foldhash` | `0.2.0` | `Zlib` | [`LICENSE`](#material-045) |
+| `getrandom` | `0.4.3` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-046), [`LICENSE-MIT`](#material-047), [`src/backends/rdrand.rs#L52-L54`](#material-048) |
+| `hashbrown` | `0.17.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-049), [`abseil-swisstable`](#material-050) |
+| `heck` | `0.5.0` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-051) |
+| `html5ever` | `0.39.0` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-052), [`src/encoding.rs#L1-L8`](#material-053), [`html5ever-copyright`](#material-054), [`whatwg-html`](#material-055) |
+| `hybrid-array` | `0.4.15` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-056) |
+| `indexmap` | `2.14.2` | `Apache-2.0 OR MIT` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-057) |
+| `inout` | `0.2.6` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-058) |
 | `itoa` | `1.0.19` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-011), [`LICENSE-MIT`](#material-002) |
-| `libc` | `0.2.191` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-011), [`LICENSE-MIT`](#material-064), [`src/unix/linux_like/mod.rs#L1727-L1727`](#material-065) |
-| `lock_api` | `0.4.14` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-066), [`src/lib.rs#L1-L7`](#material-067), [`src/rwlock.rs#L1-L7`](#material-068) |
-| `log` | `0.4.35` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-015), [`src/lib.rs#L1-L9`](#material-069), [`src/macros.rs#L1-L9`](#material-070) |
-| `lopdf` | `0.47.0` | `MIT` | [`LICENSE`](#material-071), [`adobe-glyph-list`](#material-072) |
-| `markup5ever` | `0.39.0` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-057), [`html5ever-copyright`](#material-059) |
-| `md-5` | `0.11.0` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-073) |
+| `libc` | `0.2.191` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-011), [`LICENSE-MIT`](#material-059), [`src/unix/linux_like/mod.rs#L1727-L1727`](#material-060) |
+| `lock_api` | `0.4.14` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-061), [`src/lib.rs#L1-L7`](#material-062), [`src/rwlock.rs#L1-L7`](#material-063) |
+| `log` | `0.4.35` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-015), [`src/lib.rs#L1-L9`](#material-064), [`src/macros.rs#L1-L9`](#material-065) |
+| `lopdf` | `0.47.0` | `MIT` | [`LICENSE`](#material-066), [`adobe-glyph-list`](#material-067) |
+| `markup5ever` | `0.39.0` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-052), [`html5ever-copyright`](#material-054) |
+| `md-5` | `0.11.0` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-068) |
 | `memchr` | `2.8.3` | `Unlicense OR MIT` | [`COPYING`](#material-007), [`LICENSE-MIT`](#material-008), [`UNLICENSE`](#material-009) |
-| `miniz_oxide` | `0.9.1` | `MIT OR Zlib OR Apache-2.0` | [`LICENSE-APACHE.md`](#material-011), [`LICENSE-MIT.md`](#material-074), [`LICENSE-ZLIB.md`](#material-075), [`LICENSE`](#material-074) |
-| `multiversion_no_op` | `1.0.0` | `Apache-2.0 OR MIT` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-025), [`COPYRIGHT`](#material-076) |
-| `new_debug_unreachable` | `1.0.6` | `MIT` | [`LICENSE-MIT`](#material-077) |
-| `nom` | `8.0.0` | `MIT` | [`LICENSE`](#material-078) |
+| `miniz_oxide` | `0.9.1` | `MIT OR Zlib OR Apache-2.0` | [`LICENSE-APACHE.md`](#material-011), [`LICENSE-MIT.md`](#material-069), [`LICENSE-ZLIB.md`](#material-070), [`LICENSE`](#material-069) |
+| `multiversion_no_op` | `1.0.0` | `Apache-2.0 OR MIT` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-024), [`COPYRIGHT`](#material-071) |
+| `new_debug_unreachable` | `1.0.6` | `MIT` | [`LICENSE-MIT`](#material-072) |
+| `nom` | `8.0.0` | `MIT` | [`LICENSE`](#material-073) |
 | `once_cell` | `1.21.4` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-002) |
-| `parking_lot` | `0.12.5` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-066), [`src/condvar.rs#L1-L7`](#material-068) |
-| `parking_lot_core` | `0.9.12` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-066), [`src/lib.rs#L1-L7`](#material-068) |
-| `percent-encoding` | `2.3.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-079), [`src/ascii_set.rs#L1-L7`](#material-080) |
-| `phf` | `0.13.1` | `MIT` | [`LICENSE`](#material-081) |
-| `phf_codegen` | `0.13.1` | `MIT` | [`LICENSE`](#material-081) |
-| `phf_generator` | `0.13.1` | `MIT` | [`LICENSE`](#material-081) |
-| `phf_shared` | `0.13.1` | `MIT` | [`LICENSE`](#material-081) |
+| `parking_lot` | `0.12.5` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-061), [`src/condvar.rs#L1-L7`](#material-063) |
+| `parking_lot_core` | `0.9.12` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-061), [`src/lib.rs#L1-L7`](#material-063) |
+| `percent-encoding` | `2.3.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-074), [`src/ascii_set.rs#L1-L7`](#material-075) |
+| `phf` | `0.13.1` | `MIT` | [`LICENSE`](#material-076) |
+| `phf_codegen` | `0.13.1` | `MIT` | [`LICENSE`](#material-076) |
+| `phf_generator` | `0.13.1` | `MIT` | [`LICENSE`](#material-076) |
+| `phf_shared` | `0.13.1` | `MIT` | [`LICENSE`](#material-076) |
 | `portable-atomic` | `1.15.0` | `Apache-2.0 OR MIT` | [`LICENSE-APACHE`](#material-011), [`LICENSE-MIT`](#material-002) |
-| `precomputed-hash` | `0.1.1` | `MIT` | [`LICENSE`](#material-082) |
+| `precomputed-hash` | `0.1.1` | `MIT` | [`LICENSE`](#material-077) |
 | `proc-macro2` | `1.0.107` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-011), [`LICENSE-MIT`](#material-002) |
-| `pyo3` | `0.29.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-083), [`LICENSE-MIT`](#material-084), [`pyo3-runtime/LICENSE-APACHE`](#material-083), [`pyo3-runtime/LICENSE-MIT`](#material-084), [`src/buffer.rs#L4-L20`](#material-085), [`src/types/mappingproxy.rs#L1-L1`](#material-086), [`src/impl_/pymethods.rs#L450-L450`](#material-087) |
-| `pyo3-build-config` | `0.29.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-083), [`LICENSE-MIT`](#material-084) |
-| `pyo3-ffi` | `0.29.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-083), [`LICENSE-MIT`](#material-084), [`pythoncapi-compat`](#material-088), [`cpython-psf`](#material-089) |
-| `pyo3-macros` | `0.29.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-083), [`LICENSE-MIT`](#material-084) |
-| `pyo3-macros-backend` | `0.29.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-083), [`LICENSE-MIT`](#material-084) |
-| `quick-xml` | `0.41.0` | `MIT` | [`LICENSE-MIT.md`](#material-090), [`whatwg-html`](#material-060) |
+| `pyo3` | `0.29.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-078), [`LICENSE-MIT`](#material-079), [`pyo3-runtime/LICENSE-APACHE`](#material-078), [`pyo3-runtime/LICENSE-MIT`](#material-079), [`src/buffer.rs#L4-L20`](#material-080), [`src/types/mappingproxy.rs#L1-L1`](#material-081), [`src/impl_/pymethods.rs#L450-L450`](#material-082) |
+| `pyo3-build-config` | `0.29.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-078), [`LICENSE-MIT`](#material-079) |
+| `pyo3-ffi` | `0.29.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-078), [`LICENSE-MIT`](#material-079), [`pythoncapi-compat`](#material-083), [`cpython-psf`](#material-084) |
+| `pyo3-macros` | `0.29.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-078), [`LICENSE-MIT`](#material-079) |
+| `pyo3-macros-backend` | `0.29.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-078), [`LICENSE-MIT`](#material-079) |
+| `quick-xml` | `0.41.0` | `MIT` | [`LICENSE-MIT.md`](#material-085), [`whatwg-html`](#material-055) |
 | `quote` | `1.0.47` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-011), [`LICENSE-MIT`](#material-002) |
-| `r-efi` | `6.0.0` | `MIT OR Apache-2.0 OR LGPL-2.1-or-later` | [`AUTHORS`](#material-091) |
-| `rand` | `0.10.4` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-092), [`LICENSE-MIT`](#material-093), [`COPYRIGHT`](#material-094) |
-| `rand_core` | `0.10.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-095), [`LICENSE-MIT`](#material-096), [`COPYRIGHT`](#material-097) |
-| `rangemap` | `1.8.0` | `MIT/Apache-2.0` | [`LICENSE-APACHE`](#material-098), [`LICENSE-MIT`](#material-099) |
-| `rayon` | `1.12.0` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-100) |
-| `rayon-core` | `1.13.0` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-100) |
-| `redox_syscall` | `0.5.18` | `MIT` | [`LICENSE`](#material-101) |
+| `r-efi` | `6.0.0` | `MIT OR Apache-2.0 OR LGPL-2.1-or-later` | [`AUTHORS`](#material-086) |
+| `rand` | `0.10.4` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-087), [`LICENSE-MIT`](#material-088), [`COPYRIGHT`](#material-089) |
+| `rand_core` | `0.10.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-090), [`LICENSE-MIT`](#material-091), [`COPYRIGHT`](#material-092) |
+| `rangemap` | `1.8.0` | `MIT/Apache-2.0` | [`LICENSE-APACHE`](#material-093), [`LICENSE-MIT`](#material-094) |
+| `rayon` | `1.12.0` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-095) |
+| `rayon-core` | `1.13.0` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-095) |
+| `redox_syscall` | `0.5.18` | `MIT` | [`LICENSE`](#material-096) |
 | `regex` | `1.13.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-015) |
 | `regex-automata` | `0.4.19` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-015) |
-| `regex-syntax` | `0.8.12` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-015), [`src/unicode_tables/LICENSE-UNICODE`](#material-102) |
-| `roxmltree` | `0.21.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-103) |
+| `regex-syntax` | `0.8.12` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-015), [`src/unicode_tables/LICENSE-UNICODE`](#material-097) |
+| `roxmltree` | `0.21.2` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-098) |
 | `rustversion` | `1.0.23` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-011), [`LICENSE-MIT`](#material-002) |
-| `scopeguard` | `1.2.0` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-104) |
+| `scopeguard` | `1.2.0` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-099) |
 | `serde` | `1.0.229` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-011), [`LICENSE-MIT`](#material-002) |
 | `serde_core` | `1.0.229` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-011), [`LICENSE-MIT`](#material-002) |
 | `serde_derive` | `1.0.229` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-011), [`LICENSE-MIT`](#material-002) |
-| `serde_json` | `1.0.154` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-011), [`LICENSE-MIT`](#material-002), [`src/lexical/mod.rs#L1-L9`](#material-105) |
-| `sha2` | `0.10.9` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-106), [`mbed-tls`](#material-107) |
-| `sha2` | `0.11.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-073), [`mbed-tls`](#material-107) |
-| `simd-adler32` | `0.3.10` | `MIT` | [`LICENSE.md`](#material-108), [`chromium-zlib-notice`](#material-109), [`chromium-bsd`](#material-110) |
-| `simdutf8` | `0.1.5` | `MIT OR Apache-2.0` | [`LICENSE-Apache`](#material-011), [`LICENSE-MIT`](#material-111), [`README.md#L153-L166`](#material-112), [`simdjson`](#material-113) |
-| `siphasher` | `1.0.4` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-002), [`COPYING`](#material-114), [`src/sip.rs#L1-L9`](#material-115) |
-| `smallvec` | `1.16.6` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-116) |
-| `string_cache` | `0.9.0` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-117), [`src/atom.rs#L1-L8`](#material-118) |
-| `string_cache_codegen` | `0.6.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-117), [`lib.rs#L1-L8`](#material-119) |
-| `stringprep` | `0.1.5` | `MIT/Apache-2.0` | [`LICENSE-APACHE`](#material-035), [`LICENSE-MIT`](#material-120), [`rfc-3454`](#material-121) |
+| `serde_json` | `1.0.154` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-011), [`LICENSE-MIT`](#material-002), [`src/lexical/mod.rs#L1-L9`](#material-100) |
+| `sha2` | `0.11.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-068), [`mbed-tls`](#material-101) |
+| `simd-adler32` | `0.3.10` | `MIT` | [`LICENSE.md`](#material-102), [`chromium-zlib-notice`](#material-103), [`chromium-bsd`](#material-104) |
+| `simdutf8` | `0.1.5` | `MIT OR Apache-2.0` | [`LICENSE-Apache`](#material-011), [`LICENSE-MIT`](#material-105), [`README.md#L153-L166`](#material-106), [`simdjson`](#material-107) |
+| `siphasher` | `1.0.4` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-002), [`COPYING`](#material-108), [`src/sip.rs#L1-L9`](#material-109) |
+| `smallvec` | `1.16.6` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-110) |
+| `string_cache` | `0.9.0` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-111), [`src/atom.rs#L1-L8`](#material-112) |
+| `string_cache_codegen` | `0.6.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-111), [`lib.rs#L1-L8`](#material-113) |
+| `stringprep` | `0.1.5` | `MIT/Apache-2.0` | [`LICENSE-APACHE`](#material-033), [`LICENSE-MIT`](#material-114), [`rfc-3454`](#material-115) |
 | `syn` | `2.0.119` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-011), [`LICENSE-MIT`](#material-002) |
 | `syn` | `3.0.10` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-011), [`LICENSE-MIT`](#material-002) |
-| `target-lexicon` | `0.13.6` | `Apache-2.0 WITH LLVM-exception` | [`LICENSE`](#material-122) |
-| `tendril` | `0.5.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-123) |
+| `target-lexicon` | `0.13.6` | `Apache-2.0 WITH LLVM-exception` | [`LICENSE`](#material-116) |
+| `tendril` | `0.5.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-117) |
 | `thiserror` | `2.0.21` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-011), [`LICENSE-MIT`](#material-002) |
 | `thiserror-impl` | `2.0.21` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-011), [`LICENSE-MIT`](#material-002) |
-| `tinyvec` | `1.13.3` | `Zlib OR Apache-2.0 OR MIT` | [`LICENSE-APACHE.md`](#material-004), [`LICENSE-MIT.md`](#material-002), [`LICENSE-ZLIB.md`](#material-124) |
-| `typenum` | `1.20.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-125), [`LICENSE-MIT`](#material-126), [`LICENSE`](#material-127) |
-| `unicode-bidi` | `0.3.18` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-056), [`AUTHORS`](#material-128), [`COPYRIGHT`](#material-129), [`src/utf16.rs#L1-L9`](#material-130), [`unicode-16`](#material-131), [`unicode-v3`](#material-132) |
-| `unicode-ident` | `1.0.27` | `(MIT OR Apache-2.0) AND Unicode-3.0` | [`LICENSE-APACHE`](#material-011), [`LICENSE-MIT`](#material-002), [`LICENSE-UNICODE`](#material-133) |
-| `unicode-normalization` | `0.1.26` | `(MIT OR Apache-2.0) AND Unicode-3.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-056), [`COPYRIGHT`](#material-134), [`LICENSE-UNICODE`](#material-133), [`src/tables.rs#L1-L9`](#material-135), [`src/decompose.rs#L1-L9`](#material-115), [`src/lookups.rs#L1-L9`](#material-136) |
-| `unicode-properties` | `0.1.5` | `(MIT OR Apache-2.0) AND Unicode-3.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-056), [`COPYRIGHT`](#material-134), [`LICENSE-UNICODE`](#material-132), [`src/lib.rs#L1-L9`](#material-115) |
-| `version_check` | `0.9.5` | `MIT/Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-137) |
-| `web_atoms` | `0.2.6` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-057), [`html5ever-copyright`](#material-059), [`whatwg-html`](#material-060) |
-| `weezl` | `0.2.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-138) |
-| `windows-link` | `0.2.1` | `MIT OR Apache-2.0` | [`license-apache-2.0`](#material-139), [`license-mit`](#material-140) |
-| `zip` | `2.6.1` | `MIT` | [`LICENSE`](#material-141) |
-| `zlib-rs` | `0.6.8` | `Zlib` | [`LICENSE`](#material-142), [`zlib`](#material-143), [`vector-class-library`](#material-144), [`tokio`](#material-145), [`src/adler32/wasm.rs#L1-L1`](#material-146) |
-| `zmij` | `1.0.23` | `MIT` | [`LICENSE-MIT`](#material-002), [`zmij-cpp`](#material-147) |
+| `tinyvec` | `1.13.3` | `Zlib OR Apache-2.0 OR MIT` | [`LICENSE-APACHE.md`](#material-004), [`LICENSE-MIT.md`](#material-002), [`LICENSE-ZLIB.md`](#material-118) |
+| `typenum` | `1.20.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-119), [`LICENSE-MIT`](#material-120), [`LICENSE`](#material-121) |
+| `unicode-bidi` | `0.3.18` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-051), [`AUTHORS`](#material-122), [`COPYRIGHT`](#material-123), [`src/utf16.rs#L1-L9`](#material-124), [`unicode-16`](#material-125), [`unicode-v3`](#material-126) |
+| `unicode-ident` | `1.0.27` | `(MIT OR Apache-2.0) AND Unicode-3.0` | [`LICENSE-APACHE`](#material-011), [`LICENSE-MIT`](#material-002), [`LICENSE-UNICODE`](#material-127) |
+| `unicode-normalization` | `0.1.26` | `(MIT OR Apache-2.0) AND Unicode-3.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-051), [`COPYRIGHT`](#material-128), [`LICENSE-UNICODE`](#material-127), [`src/tables.rs#L1-L9`](#material-129), [`src/decompose.rs#L1-L9`](#material-109), [`src/lookups.rs#L1-L9`](#material-130) |
+| `unicode-properties` | `0.1.5` | `(MIT OR Apache-2.0) AND Unicode-3.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-051), [`COPYRIGHT`](#material-128), [`LICENSE-UNICODE`](#material-126), [`src/lib.rs#L1-L9`](#material-109) |
+| `web_atoms` | `0.2.6` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-052), [`html5ever-copyright`](#material-054), [`whatwg-html`](#material-055) |
+| `weezl` | `0.2.1` | `MIT OR Apache-2.0` | [`LICENSE-APACHE`](#material-004), [`LICENSE-MIT`](#material-131) |
+| `windows-link` | `0.2.1` | `MIT OR Apache-2.0` | [`license-apache-2.0`](#material-132), [`license-mit`](#material-133) |
+| `zip` | `2.6.1` | `MIT` | [`LICENSE`](#material-134) |
+| `zlib-rs` | `0.6.8` | `Zlib` | [`LICENSE`](#material-135), [`zlib`](#material-136), [`vector-class-library`](#material-137), [`tokio`](#material-138), [`src/adler32/wasm.rs#L1-L1`](#material-139) |
+| `zmij` | `1.0.23` | `MIT` | [`LICENSE-MIT`](#material-002), [`zmij-cpp`](#material-140) |
 
 ## Attribution notes
 
@@ -155,7 +148,6 @@ toolchain's own standard-library notices are in `wenyi_core/_licenses/rust-std/`
 - **pyo3 0.29.2:** PyO3 credits the Cython traversal code in `src/impl_/pymethods.rs`; its [Apache-2.0 terms](https://github.com/cython/cython/blob/7acfb375fb54a033f021b0982a3cd40c34fb22ac/LICENSE.txt) are the same terms reproduced in `LICENSE-APACHE`.
 - **pyo3-ffi 0.29.2:** PyO3 ports a CPython exception helper to Rust (`src/pyerrors.rs`) and adapts `pythoncapi-compat` for compatibility shims (`src/compat/mod.rs`). This attribution is for the ported code, not the separately installed Python runtime.
 - **r-efi 6.0.0:** This target-specific crate offers three alternatives; the MIT option is used for this notice. The upstream `AUTHORS` file contains the full MIT terms and copyright.
-- **sha2 0.10.9:** The AArch64 backends credit Mbed TLS. For those adaptations see the Mbed TLS notice and the Apache-2.0 terms in `LICENSE-APACHE`.
 - **sha2 0.11.1:** The AArch64 backends credit Mbed TLS. For those adaptations see the Mbed TLS notice and the Apache-2.0 terms in `LICENSE-APACHE`.
 - **simd-adler32 0.3.10:** The AArch64 NEON implementation adapts Chromium's zlib code and retains its attribution and BSD-style license here.
 - **simdutf8 0.1.5:** Upstream credits the Rust simd-json port and C++ simdjson. For the Apache-2.0 terms see `LICENSE-Apache`.
@@ -1071,7 +1063,7 @@ DEALINGS IN THE SOFTWARE.
 ### material-017
 
 ```
-Copyright (c) 2018-2019 The RustCrypto Project Developers
+Copyright (c) 2018-2025 The RustCrypto Project Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -1101,43 +1093,13 @@ DEALINGS IN THE SOFTWARE.
 ### material-018
 
 ```
-Copyright (c) 2018-2025 The RustCrypto Project Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
-
-### material-019
-
-```
 // Copyright 2013 Google Inc. All Rights Reserved.
 //
 // Distributed under MIT license.
 // See file LICENSE for detail or copy at https://opensource.org/licenses/MIT
 ```
 
-### material-020
+### material-019
 
 ```
 Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors.
@@ -1161,7 +1123,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### material-021
+### material-020
 
 ```
 Copyright (c) 2018-2022 RustCrypto Developers
@@ -1192,7 +1154,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-022
+### material-021
 
 ```
 Copyright (c) 2014 Alex Crichton
@@ -1222,7 +1184,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-023
+### material-022
 
 ```
 Copyright (c) 2019-2026 The RustCrypto Project Developers
@@ -1252,7 +1214,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-024
+### material-023
 
 ```
 //! Adapted from the Crypto++ `chacha_simd` implementation by Jack Lloyd and
@@ -1260,7 +1222,7 @@ DEALINGS IN THE SOFTWARE.
 //! bulk paths (see `ChaCha20_512_neon` in OpenSSL).
 ```
 
-### material-025
+### material-024
 
 ```
 Copyright Mozilla Foundation
@@ -1290,7 +1252,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-026
+### material-025
 
 ```
 chardetng is copyright Mozilla Foundation.
@@ -1304,14 +1266,14 @@ notice may not be copied, modified, or distributed except
 according to those terms.
 ```
 
-### material-027
+### material-026
 
 ```
 /* Any copyright is dedicated to the Public Domain.
  * https://creativecommons.org/publicdomain/zero/1.0/ */
 ```
 
-### material-028
+### material-027
 
 ```
 Copyright (c) 2016-2025 RustCrypto Developers
@@ -1341,7 +1303,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-029
+### material-028
 
 ```
 Copyright (c) 2020-2026 The RustCrypto Project Developers
@@ -1371,7 +1333,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-030
+### material-029
 
 ```
 Copyright (c) 2017-2020 The Rust Project Developers
@@ -1401,7 +1363,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-031
+### material-030
 
 ```
 # License / Copyright
@@ -1409,7 +1371,7 @@ DEALINGS IN THE SOFTWARE.
 Much of this code is taken from the `stdarch` repository (for easy upgrading / maximal compatibility), and thus it uses the same copyright as Rust — MIT/Apache-2.0 dual license.
 ```
 
-### material-032
+### material-031
 
 ```
 Copyright (c) 2023-2026 The RustCrypto Project Developers
@@ -1439,43 +1401,13 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-033
+### material-032
 
 ```
 /// Copyright (c) 2014 Alex Crichton. Dual-licensed Apache 2.0 + MIT.
 ```
 
-### material-034
-
-```
-Copyright (c) 2020-2025 The RustCrypto Project Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
-
-### material-035
+### material-033
 
 ```
                                  Apache License
@@ -1681,7 +1613,7 @@ DEALINGS IN THE SOFTWARE.
    limitations under the License.
 ```
 
-### material-036
+### material-034
 
 ```
 MIT License
@@ -1707,7 +1639,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### material-037
+### material-035
 
 ```
 The MIT License (MIT)
@@ -1739,37 +1671,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-038
-
-```
-Copyright (c) 2021 RustCrypto Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
-
-### material-039
+### material-036
 
 ```
 Copyright (c) 2021-2026 RustCrypto Developers
@@ -1799,37 +1701,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-040
-
-```
-Copyright (c) 2017 Artyom Pavlov
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
-
-### material-041
+### material-037
 
 ```
 Copyright (c) 2017-2025 RustCrypto Developers
@@ -1860,7 +1732,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-042
+### material-038
 
 ```
 Copyright (c) 2026 RustCrypto Developers
@@ -1890,7 +1762,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-043
+### material-039
 
 ```
 Copyright (c) 2015
@@ -1920,7 +1792,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-044
+### material-040
 
 ```
 encoding_rs is copyright Mozilla Foundation.
@@ -1942,7 +1814,7 @@ Test code within encoding_rs is dedicated to the Public Domain when so
 designated (see the individual files for PD/CC0-dedicated sections).
 ```
 
-### material-045
+### material-041
 
 ```
 Copyright © WHATWG (Apple, Google, Mozilla, Microsoft).
@@ -1973,7 +1845,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### material-046
+### material-042
 
 ```
 Copyright (c) 2016--2023
@@ -2003,7 +1875,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-047
+### material-043
 
 ```
 Copyright (c) 2014-2026 Alex Crichton
@@ -2033,7 +1905,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-048
+### material-044
 
 ```
 // Copyright 2013 The Rust Project Developers. See the COPYRIGHT
@@ -2047,7 +1919,7 @@ DEALINGS IN THE SOFTWARE.
 // except according to those terms.
 ```
 
-### material-049
+### material-045
 
 ```
 Copyright (c) 2024 Orson Peters
@@ -2071,33 +1943,7 @@ the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 ```
 
-### material-050
-
-```
-The MIT License (MIT)
-
-Copyright (c) 2015 Bartłomiej Kamiński
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
-### material-051
+### material-046
 
 ```
                               Apache License
@@ -2303,7 +2149,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ```
 
-### material-052
+### material-047
 
 ```
 Copyright (c) 2018-2026 The rust-random Project Developers
@@ -2334,7 +2180,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-053
+### material-048
 
 ```
 // Run a small self-test to make sure we aren't repeating values
@@ -2342,7 +2188,7 @@ DEALINGS IN THE SOFTWARE.
 // Fails with probability < 2^(-90) on 32-bit systems
 ```
 
-### material-054
+### material-049
 
 ```
 Copyright (c) 2016 Amanieu d'Antras
@@ -2372,7 +2218,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-055
+### material-050
 
 ```
 // Copyright 2018 The Abseil Authors.
@@ -2390,7 +2236,7 @@ DEALINGS IN THE SOFTWARE.
 // limitations under the License.
 ```
 
-### material-056
+### material-051
 
 ```
 Copyright (c) 2015 The Rust Project Developers
@@ -2420,7 +2266,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-057
+### material-052
 
 ```
 Copyright (c) 2014 The html5ever Project Developers
@@ -2450,7 +2296,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-058
+### material-053
 
 ```
 // Copyright 2014-2025 The html5ever Project Developers. See the
@@ -2463,7 +2309,7 @@ DEALINGS IN THE SOFTWARE.
 // except according to those terms.
 ```
 
-### material-059
+### material-054
 
 ```
 This project is Copyright 2014-2017 , The html5ever Project Developers (given in
@@ -2476,7 +2322,7 @@ carrying such notice may not be copied, modified, or distributed except
 according to those terms.
 ```
 
-### material-060
+### material-055
 
 ```
 Copyright © WHATWG (Apple, Google, Mozilla, Microsoft).
@@ -2513,7 +2359,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### material-061
+### material-056
 
 ```
 Copyright (c) 2022-2026 The RustCrypto Project Developers
@@ -2543,7 +2389,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-062
+### material-057
 
 ```
 Copyright (c) 2016--2017
@@ -2573,7 +2419,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-063
+### material-058
 
 ```
 Copyright (c) 2022-2025 The RustCrypto Project Developers
@@ -2604,7 +2450,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-064
+### material-059
 
 ```
 Copyright (c) The Rust Project Developers
@@ -2634,13 +2480,13 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-065
+### material-060
 
 ```
         // adapted from https://github.com/torvalds/linux/blob/8a696a29c6905594e4abf78eaafcb62165ac61f1/rust/kernel/ioctl.rs
 ```
 
-### material-066
+### material-061
 
 ```
 Copyright (c) 2016 The Rust Project Developers
@@ -2670,7 +2516,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-067
+### material-062
 
 ```
 // Copyright 2018 Amanieu d'Antras
@@ -2681,7 +2527,7 @@ DEALINGS IN THE SOFTWARE.
 // copied, modified, or distributed except according to those terms.
 ```
 
-### material-068
+### material-063
 
 ```
 // Copyright 2016 Amanieu d'Antras
@@ -2692,7 +2538,7 @@ DEALINGS IN THE SOFTWARE.
 // copied, modified, or distributed except according to those terms.
 ```
 
-### material-069
+### material-064
 
 ```
 // Copyright 2015 The Rust Project Developers. See the COPYRIGHT
@@ -2706,7 +2552,7 @@ DEALINGS IN THE SOFTWARE.
 // except according to those terms.
 ```
 
-### material-070
+### material-065
 
 ```
 // Copyright 2014-2015 The Rust Project Developers. See the COPYRIGHT
@@ -2720,7 +2566,7 @@ DEALINGS IN THE SOFTWARE.
 // except according to those terms.
 ```
 
-### material-071
+### material-066
 
 ```
 MIT License
@@ -2746,7 +2592,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### material-072
+### material-067
 
 ```
 Copyright 2002-2019 Adobe (http://www.adobe.com/).
@@ -2783,7 +2629,7 @@ OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### material-073
+### material-068
 
 ```
 Copyright (c) 2016-2026 The RustCrypto Project Developers
@@ -2816,7 +2662,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-074
+### material-069
 
 ```
 MIT License
@@ -2845,7 +2691,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### material-075
+### material-070
 
 ```
 Copyright 2013-2014 RAD Game Tools and Valve Software
@@ -2864,7 +2710,7 @@ Permission is granted to anyone to use this software for any purpose, including 
 3. This notice may not be removed or altered from any source distribution.
 ```
 
-### material-076
+### material-071
 
 ```
 Copyright Mozilla Foundation
@@ -2884,7 +2730,7 @@ See the Licenses for the specific language governing permissions and
 limitations under the Licenses.
 ```
 
-### material-077
+### material-072
 
 ```
 Copyright (c) 2015 Jonathan Reem
@@ -2914,7 +2760,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-078
+### material-073
 
 ```
 Copyright (c) 2014-2019 Geoffroy Couprie
@@ -2939,7 +2785,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### material-079
+### material-074
 
 ```
 Copyright (c) 2013-2025 The rust-url developers
@@ -2969,7 +2815,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-080
+### material-075
 
 ```
 // Copyright 2013-2016 The rust-url developers.
@@ -2981,7 +2827,7 @@ DEALINGS IN THE SOFTWARE.
 // except according to those terms.
 ```
 
-### material-081
+### material-076
 
 ```
 The MIT License (MIT)
@@ -3006,7 +2852,7 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### material-082
+### material-077
 
 ```
 MIT License
@@ -3032,7 +2878,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### material-083
+### material-078
 
 ```
 Copyright (c) 2017-present PyO3 Project and Contributors.  https://github.com/PyO3
@@ -3215,7 +3061,7 @@ TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
 END OF TERMS AND CONDITIONS
 ```
 
-### material-084
+### material-079
 
 ```
 Copyright (c) 2023-present PyO3 Project and Contributors.  https://github.com/PyO3
@@ -3245,7 +3091,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-085
+### material-080
 
 ```
 // Copyright (c) 2017 Daniel Grunwald
@@ -3267,19 +3113,19 @@ DEALINGS IN THE SOFTWARE.
 // DEALINGS IN THE SOFTWARE.
 ```
 
-### material-086
+### material-081
 
 ```
 // Copyright (c) 2017-present PyO3 Project and Contributors
 ```
 
-### material-087
+### material-082
 
 ```
 /// Adapted from <https://github.com/cython/cython/blob/7acfb375fb54a033f021b0982a3cd40c34fb22ac/Cython/Utility/ExtensionTypes.c#L386>
 ```
 
-### material-088
+### material-083
 
 ```
 BSD Zero Clause License
@@ -3298,7 +3144,7 @@ OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 ```
 
-### material-089
+### material-084
 
 ```
 PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2
@@ -3351,7 +3197,7 @@ agrees to be bound by the terms and conditions of this License
 Agreement.
 ```
 
-### material-090
+### material-085
 
 ```
 The MIT License (MIT)
@@ -3379,7 +3225,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### material-091
+### material-086
 
 ```
 LICENSE:
@@ -3459,7 +3305,7 @@ AUTHORS: (ordered alphabetically)
         Trevor Gross <tmgross@umich.edu>
 ```
 
-### material-092
+### material-087
 
 ```
                               Apache License
@@ -3640,7 +3486,7 @@ TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
 END OF TERMS AND CONDITIONS
 ```
 
-### material-093
+### material-088
 
 ```
 Copyright 2018 Developers of the Rand project
@@ -3671,7 +3517,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-094
+### material-089
 
 ```
 Copyrights in the Rand project are retained by their contributors. No
@@ -3688,7 +3534,7 @@ The Rand project includes code from the Rust project
 published under these same licenses.
 ```
 
-### material-095
+### material-090
 
 ```
                               Apache License
@@ -3880,7 +3726,7 @@ APPENDIX: How to apply the Apache License to your work.
    identification within third-party archives.
 ```
 
-### material-096
+### material-091
 
 ```
 Copyright (c) 2018-2026 The Rand Project Developers
@@ -3910,7 +3756,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-097
+### material-092
 
 ```
 Copyrights in the Rand project are retained by their contributors. No
@@ -3924,7 +3770,7 @@ licensed under the Apache License, Version 2.0 <LICENSE-APACHE> or
 <LICENSE-MIT> or <http://opensource.org/licenses/MIT>, at your option.
 ```
 
-### material-098
+### material-093
 
 ```
                                  Apache License
@@ -4119,7 +3965,7 @@ licensed under the Apache License, Version 2.0 <LICENSE-APACHE> or
    limitations under the License.
 ```
 
-### material-099
+### material-094
 
 ```
 Copyright 2019 Jeffrey Parsons
@@ -4131,7 +3977,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### material-100
+### material-095
 
 ```
 Copyright (c) 2010 The Rust Project Developers
@@ -4161,7 +4007,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-101
+### material-096
 
 ```
 Copyright (c) 2017 Redox OS Developers
@@ -4188,7 +4034,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### material-102
+### material-097
 
 ```
 UNICODE, INC. LICENSE AGREEMENT - DATA FILES AND SOFTWARE
@@ -4250,7 +4096,7 @@ use or other dealings in these Data Files or Software without prior
 written authorization of the copyright holder.
 ```
 
-### material-103
+### material-098
 
 ```
 The MIT License (MIT)
@@ -4276,7 +4122,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### material-104
+### material-099
 
 ```
 Copyright (c) 2016-2019 Ulrik Sverdrup "bluss" and scopeguard developers
@@ -4306,7 +4152,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-105
+### material-100
 
 ```
 // The code in this module is derived from the `lexical` crate by @Alexhuszagh
@@ -4320,46 +4166,14 @@ DEALINGS IN THE SOFTWARE.
 // copyright Alexander Huszagh.
 ```
 
-### material-106
-
-```
-Copyright (c) 2006-2009 Graydon Hoare
-Copyright (c) 2009-2013 Mozilla Foundation
-Copyright (c) 2016 Artyom Pavlov
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
-
-### material-107
+### material-101
 
 ```
 Copyright The Mbed TLS Contributors
 SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later
 ```
 
-### material-108
+### material-102
 
 ```
 MIT License
@@ -4385,7 +4199,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### material-109
+### material-103
 
 ```
  * Copyright 2017 The Chromium Authors
@@ -4393,7 +4207,7 @@ SOFTWARE.
  * found in the Chromium source repository LICENSE file.
 ```
 
-### material-110
+### material-104
 
 ```
 // Copyright 2015 The Chromium Authors
@@ -4425,7 +4239,7 @@ SOFTWARE.
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### material-111
+### material-105
 
 ```
 MIT License
@@ -4449,7 +4263,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### material-112
+### material-106
 
 ```
 ## Thanks
@@ -4467,13 +4281,13 @@ the MIT license and Apache 2.0 license as well.
 simdjson itself is distributed under the Apache License 2.0.
 ```
 
-### material-113
+### material-107
 
 ```
 Copyright 2018-2019 The simdjson authors
 ```
 
-### material-114
+### material-108
 
 ```
 Copyright 2012-2016 The Rust Project Developers.
@@ -4485,7 +4299,7 @@ http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
 option.
 ```
 
-### material-115
+### material-109
 
 ```
 // Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT
@@ -4499,7 +4313,7 @@ option.
 // except according to those terms.
 ```
 
-### material-116
+### material-110
 
 ```
 Copyright (c) 2018 The Servo Project Developers
@@ -4529,7 +4343,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-117
+### material-111
 
 ```
 Copyright (c) 2012-2013 Mozilla Foundation
@@ -4559,7 +4373,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-118
+### material-112
 
 ```
 // Copyright 2014 The Servo Project Developers. See the COPYRIGHT
@@ -4572,7 +4386,7 @@ DEALINGS IN THE SOFTWARE.
 // except according to those terms.
 ```
 
-### material-119
+### material-113
 
 ```
 // Copyright 2016 The Servo Project Developers. See the COPYRIGHT
@@ -4585,7 +4399,7 @@ DEALINGS IN THE SOFTWARE.
 // except according to those terms.
 ```
 
-### material-120
+### material-114
 
 ```
 Copyright (c) 2017 The rust-stringprep Developers
@@ -4609,7 +4423,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### material-121
+### material-115
 
 ```
 Full Copyright Statement
@@ -4641,7 +4455,7 @@ Full Copyright Statement
    MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
 ```
 
-### material-122
+### material-116
 
 ```
                                  Apache License
@@ -4864,7 +4678,7 @@ the License, but only in their entirety and only with respect to the Combined
 Software.
 ```
 
-### material-123
+### material-117
 
 ```
 Copyright (c) 2015 Keegan McAllister
@@ -4894,7 +4708,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### material-124
+### material-118
 
 ```
 Copyright (c) 2019 Daniel "Lokathor" Gee.
@@ -4910,7 +4724,7 @@ Permission is granted to anyone to use this software for any purpose, including 
 3. This notice may not be removed or altered from any source distribution.
 ```
 
-### material-125
+### material-119
 
 ```
                               Apache License
@@ -5116,7 +4930,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ```
 
-### material-126
+### material-120
 
 ```
 The MIT License (MIT)
@@ -5142,13 +4956,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### material-127
+### material-121
 
 ```
 MIT OR Apache-2.0
 ```
 
-### material-128
+### material-122
 
 ```
 This software was written by the following people:
@@ -5157,7 +4971,7 @@ Matt Brubeck <mbrubeck@limpet.net>
 Behnam Esfahbod <behnam@zwnj.org>
 ```
 
-### material-129
+### material-123
 
 ```
 This project is copyright 2015, The Servo Project Developers (given in the
@@ -5170,7 +4984,7 @@ carrying such notice may not be copied, modified, or distributed except
 according to those terms.
 ```
 
-### material-130
+### material-124
 
 ```
 // Copyright 2023 The Mozilla Foundation. See the
@@ -5183,7 +4997,7 @@ according to those terms.
 // except according to those terms.
 ```
 
-### material-131
+### material-125
 
 ```
 # Unicode Character Database
@@ -5193,7 +5007,7 @@ according to those terms.
 # For terms of use and license, see https://www.unicode.org/terms_of_use.html
 ```
 
-### material-132
+### material-126
 
 ```
 UNICODE LICENSE V3
@@ -5237,7 +5051,7 @@ dealings in these Data Files or Software without prior written
 authorization of the copyright holder.
 ```
 
-### material-133
+### material-127
 
 ```
 UNICODE LICENSE V3
@@ -5281,7 +5095,7 @@ dealings in these Data Files or Software without prior written
 authorization of the copyright holder.
 ```
 
-### material-134
+### material-128
 
 ```
 Licensed under the Apache License, Version 2.0
@@ -5293,7 +5107,7 @@ notice may not be copied, modified, or distributed except
 according to those terms.
 ```
 
-### material-135
+### material-129
 
 ```
 // Copyright 2012-2018 The Rust Project Developers. See the COPYRIGHT
@@ -5307,7 +5121,7 @@ according to those terms.
 // except according to those terms.
 ```
 
-### material-136
+### material-130
 
 ```
 // Copyright 2019 The Rust Project Developers. See the COPYRIGHT
@@ -5321,31 +5135,7 @@ according to those terms.
 // except according to those terms.
 ```
 
-### material-137
-
-```
-The MIT License (MIT)
-Copyright (c) 2017-2018 Sergio Benitez
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software is furnished to do so,
-subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-```
-
-### material-138
+### material-131
 
 ```
 The MIT License (MIT)
@@ -5371,7 +5161,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### material-139
+### material-132
 
 ```
                                  Apache License
@@ -5577,7 +5367,7 @@ SOFTWARE.
    limitations under the License.
 ```
 
-### material-140
+### material-133
 
 ```
     MIT License
@@ -5603,7 +5393,7 @@ SOFTWARE.
     SOFTWARE
 ```
 
-### material-141
+### material-134
 
 ```
 The MIT License (MIT)
@@ -5632,7 +5422,7 @@ Some files in the "tests/data" subdirectory of this repository are under other
 licences; see files named LICENSE.*.txt for details.
 ```
 
-### material-142
+### material-135
 
 ```
 (C) 2024 Trifecta Tech Foundation
@@ -5656,7 +5446,7 @@ freely, subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 ```
 
-### material-143
+### material-136
 
 ```
 Copyright notice:
@@ -5683,14 +5473,14 @@ Copyright notice:
   jloup@gzip.org          madler@alumni.caltech.edu
 ```
 
-### material-144
+### material-137
 
 ```
 (c) Copyright 2012-2022 Agner Fog.
 Apache License version 2.0 or later.
 ```
 
-### material-145
+### material-138
 
 ```
 MIT License
@@ -5716,13 +5506,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### material-146
+### material-139
 
 ```
 /// Adapted from https://github.com/mcountryman/simd-adler32/blob/main/src/imp/wasm.rs
 ```
 
-### material-147
+### material-140
 
 ```
 MIT License

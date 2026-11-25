@@ -126,7 +126,7 @@ for (const locale of ["en", "zh-CN"] as const) {
       });
       await page.goto(`/projects/${pid}/style`);
       await page
-        .getByRole("button", {
+        .getByRole("tab", {
           name: locale === "en" ? "Chapter summaries" : "章节摘要",
           exact: true,
         })
@@ -189,7 +189,7 @@ for (const locale of ["en", "zh-CN"] as const) {
         }),
       );
       await page.reload();
-      await page.getByRole("button", {
+      await page.getByRole("tab", {
         name: locale === "en" ? "Chapter summaries" : "章节摘要", exact: true,
       }).click();
       await expect(

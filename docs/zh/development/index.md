@@ -40,7 +40,7 @@ docs/
 
 ## 本地预览文档站
 
-安装 Node 22 和 pnpm 9 后，在仓库根目录执行：
+安装[前端工具链](frontend.md#两端验证)后，在仓库根目录执行：
 
 ```bash
 pnpm install --frozen-lockfile
@@ -69,8 +69,8 @@ Mermaid 图仍显示为代码块。
 [bigdawnghost.github.io/wenyi](https://bigdawnghost.github.io/wenyi/)，
 中英文通过站点语言菜单切换。这个项目站点地址要求 VitePress 的 `base` 保持 `/wenyi/`。
 
-[Documentation 工作流](../../../.github/workflows/docs.yml)使用 Node 22、
-pnpm 9、冻结锁文件和 `pnpm docs:build` 构建。PR 只验证，不发布；
+[Documentation 工作流](../../../.github/workflows/docs.yml)使用根目录 `package.json`
+声明的工具链、冻结锁文件和 `pnpm docs:build` 构建。PR 只验证，不发布；
 相关变更合入 `main` 后自动构建部署。维护者也可在
 **Actions → Documentation → Run workflow** 中选择 `main` 手动触发。
 

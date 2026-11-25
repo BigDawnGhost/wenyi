@@ -4,6 +4,7 @@ import json
 import ntpath
 from dataclasses import replace
 from pathlib import Path, PureWindowsPath
+from typing import cast
 
 import pytest
 from catalog_support import orphan
@@ -26,6 +27,7 @@ def test_settings_save_and_changed_default_keep_existing_project(tmp_path, chose
     library = tmp_path / "Library"
     context = create_context(workspace, library_root=library)
     backend = context.repository
+    assert isinstance(backend, LocalBackend)
     selected = tmp_path / "Selected" if chosen else library
     pid = backend.create_project(
         "Named Book", "en", "zh", {}, **({"library_root": selected} if chosen else {})
@@ -40,17 +42,22 @@ def test_settings_save_and_changed_default_keep_existing_project(tmp_path, chose
             settings.revision,
         )
     saved = backend.load_settings()
+    assert saved is not None
     assert saved[paths.LAST_LIBRARY_ROOT] == str(selected)
     assert str(selected) in saved[paths.LIBRARY_ROOTS]
     backend.close()
 
     restarted = create_context(workspace, library_root=tmp_path / "New installation library")
+    restarted_backend = restarted.repository
+    assert isinstance(restarted_backend, LocalBackend)
     try:
-        assert restarted.repository.project_dir(pid) == directory
-        assert restarted.repository.get_project(pid)["available"] is True
-        assert selected in restarted.repository.project_roots()
+        assert restarted_backend.project_dir(pid) == directory
+        restarted_project = restarted_backend.get_project(pid)
+        assert restarted_project is not None
+        assert restarted_project["available"] is True
+        assert selected in restarted_backend.project_roots()
     finally:
-        restarted.repository.close()
+        restarted_backend.close()
 
 
 @pytest.mark.parametrize("location", ["default", "custom"])
@@ -59,6 +66,7 @@ def test_fresh_library_upload_parse_restart_and_delete_use_one_directory(tmp_pat
     library = tmp_path / "Library"
     context = create_context(workspace, library_root=library)
     backend = context.repository
+    assert isinstance(backend, LocalBackend)
     chosen = tmp_path / "Chosen" if location == "custom" else library
     body = {"name": "Named Book", "source_lang": "en", "target_lang": "zh"}
     resolutions = []
@@ -106,7 +114,7 @@ def test_desktop_source_identity_does_not_compute_a_cross_volume_relative_path(t
     with pytest.raises(ValueError):
         ntpath.relpath(source, r"C:\Wenyi\projects")
     with use_context(context):
-        fields = UploadedSource(source, "book.txt", "text", "a" * 64).fields()
+        fields = UploadedSource(cast(Path, source), "book.txt", "text", "a" * 64).fields()
     assert fields["source_path"] == source.name
 
 
@@ -118,6 +126,7 @@ def test_project_lookup_and_source_identity_survive_renaming(tmp_path, rename):
     )
     context = create_context(workspace, library_root=library)
     backend = context.repository
+    assert isinstance(backend, LocalBackend)
     pid = backend.create_project("Named Book", "en", "zh", {})
     backend.storage_for(pid).close()
     directory = backend.project_dir(pid)
@@ -133,10 +142,12 @@ def test_project_lookup_and_source_identity_survive_renaming(tmp_path, rename):
     backend.close()
 
     restarted = create_context(workspace, library_root=library)
-    assert restarted.repository.project_dir(pid) == directory
+    restarted_backend = restarted.repository
+    assert isinstance(restarted_backend, LocalBackend)
+    assert restarted_backend.project_dir(pid) == directory
     assert Path(resolve_source(restarted, pid)) == directory / source.name
-    assert restarted.repository.project_directories() == (directory.resolve(),)
-    restarted.repository.close()
+    assert restarted_backend.project_directories() == (directory.resolve(),)
+    restarted_backend.close()
 
 
 def test_imported_source_runs_after_original_directory_is_removed(tmp_path):
@@ -151,9 +162,13 @@ def test_imported_source_runs_after_original_directory_is_removed(tmp_path):
         assert not directory.exists()
         stored_source = Path(resolve_source(context, pid))
         assert stored_source.name == source.name
-        assert stored_source.parent == context.repository.project_dir(pid)
+        backend = context.repository
+        assert isinstance(backend, LocalBackend)
+        assert stored_source.parent == backend.project_dir(pid)
         assert (stored_source.parent / "state.sqlite3").read_bytes() == original_state
-        assert context.repository.get_project(pid)["source_sha256"] == digest
+        project = backend.get_project(pid)
+        assert project is not None
+        assert project["source_sha256"] == digest
         started = client.post(f"/projects/{pid}/prepare")
         assert started.status_code == 200, started.text
         job = wait_job(started.json()["job_id"])
@@ -175,7 +190,9 @@ def test_import_refuses_changed_source_before_moving_or_rewriting_state(tmp_path
         response = client.post("/desktop/projects/import", json={"path": str(directory)})
         assert response.status_code == 422, response.text
         assert "checksum" in response.json()["message"]
-        assert context.repository.list_projects() == []
+        backend = context.repository
+        assert isinstance(backend, LocalBackend)
+        assert backend.list_projects() == []
     assert source.read_text(encoding="utf-8") == "Changed outside Wenyi.\n"
     assert (directory / "state.sqlite3").read_bytes() == before
 
@@ -185,6 +202,7 @@ def test_saved_roots_are_not_scanned_when_the_catalog_is_empty(tmp_path):
     second, source, _ = orphan(tmp_path / "Second", "b" * 16)
     context = create_context(tmp_path / "workspace")
     backend = context.repository
+    assert isinstance(backend, LocalBackend)
     with backend.transaction() as connection:
         backend.save_settings(
             {
@@ -249,6 +267,7 @@ def test_backup_directory_enumeration_refuses_a_conflicting_marker(tmp_path):
 def test_legacy_source_references_follow_the_owning_project(tmp_path, reference):
     context = create_context(tmp_path / "workspace", library_root=tmp_path / "Library")
     backend = context.repository
+    assert isinstance(backend, LocalBackend)
     pid = backend.create_project("Book", "en", "zh", {}, project_id="0123456789abcdef")
     backend.storage_for(pid).close()
     source = backend.project_dir(pid) / "source-book.txt"
@@ -278,7 +297,9 @@ def test_legacy_index_is_not_used_to_locate_a_project(tmp_path):
     )
     backend.close()
     restarted = create_context(workspace)
+    restarted_backend = restarted.repository
+    assert isinstance(restarted_backend, LocalBackend)
     with pytest.raises(HTTPException):
-        restarted.repository.project_dir(pid)
+        restarted_backend.project_dir(pid)
     assert directory.is_dir() and source.is_file()
-    restarted.repository.close()
+    restarted_backend.close()

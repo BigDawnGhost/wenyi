@@ -61,16 +61,30 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         create.assert_called_once_with("config.yaml")
 
-    def test_cli_start_respects_custom_config_path(self):
+    def test_cli_start_never_creates_an_explicit_config_path(self):
         runner = CliRunner()
-        with patch.object(Config, "create_default_file", return_value=True) as create:
-            result = runner.invoke(
-                app,
-                ["--config", "settings/config.yaml", "--help"],
-            )
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = os.path.join(directory, "custom.yaml")
+            with open(config_path, "w", encoding="utf-8") as config:
+                config.write("language: {source: en, target: zh}\n")
+            with patch.object(Config, "create_default_file", return_value=True) as create:
+                result = runner.invoke(app, ["--config", config_path, "--help"])
 
         self.assertEqual(result.exit_code, 0, result.output)
-        create.assert_called_once_with("settings/config.yaml")
+        create.assert_not_called()
+
+    def test_cli_start_fails_fast_when_explicit_config_is_missing(self):
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = os.path.join(directory, "missing.yaml")
+            with patch.object(Config, "create_default_file", return_value=True) as create:
+                result = runner.invoke(app, ["--config", config_path, "--help"])
+
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn("Configuration error: config file not found", result.output)
+        self.assertIn(config_path, result.output)
+        create.assert_not_called()
+        self.assertFalse(os.path.exists(config_path))
 
     def test_translate_loads_synopsis_budgets_from_yaml(self):
         captured = {}

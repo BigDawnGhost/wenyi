@@ -398,12 +398,15 @@ class ReviewChunkService:
         review_round: int | None = None,
         on_chunk_finished: Callable[[int], None] | None = None,
         on_chapter_finished: Callable[[Any, list[dict]], None] | None = None,
+        flush_usage: Callable[[], Any] | None = None,
     ) -> list[list[dict]]:
         """Review blocks across all chapters up to ``review_concurrency`` and merge in source order.
 
         Flattening chapter blocks into one bounded worker pool lets ``review_concurrency``
         parallelize single-chunk chapters without spawning nested pools, while streaming
         events and invoking ``on_chapter_finished`` strictly in source chapter order.
+        When ``flush_usage`` is provided it runs on the calling thread after each completed
+        chunk checkpoint so interrupted scans keep finished-chunk usage.
         """
         chapter_list = list(chapters)
         if not chapter_list:
@@ -490,6 +493,8 @@ class ReviewChunkService:
                     remaining_chunks[cpos] -= 1
                     if on_chunk_finished is not None:
                         on_chunk_finished(len(chunk))
+                    if flush_usage is not None:
+                        flush_usage()
                     flush_ready_chapters()
             else:
                 job_iter = iter(all_jobs)
@@ -525,6 +530,8 @@ class ReviewChunkService:
                             remaining_chunks[cpos] -= 1
                             if on_chunk_finished is not None:
                                 on_chunk_finished(seg_count)
+                            if flush_usage is not None:
+                                flush_usage()
                         flush_ready_chapters()
                         if first_error is not None:
                             for pending_fut in in_flight:
@@ -549,6 +556,7 @@ class ReviewChunkService:
         target_overrides: Mapping[tuple[int, int], str] | None = None,
         review_round: int | None = None,
         on_chunk_finished: Callable[[int], None] | None = None,
+        flush_usage: Callable[[], Any] | None = None,
     ) -> list[dict]:
         """Review contiguous chapter blocks in parallel and return chapter-local issue indices.
         Use blocks around three translation batches to reduce calls and repeated context.
@@ -558,7 +566,8 @@ class ReviewChunkService:
         snapshot across workers. Completed chunks and initial traces bypass model calls.
         Read fixed target/glossary snapshots. Recursively bisect invalid output and retry
         single paragraphs a bounded number of times. Merge results in original block order
-        for determinism.
+        for determinism. When ``flush_usage`` is provided it runs on the calling thread after
+        each completed chunk checkpoint so interrupted scans keep finished-chunk usage.
         """
         if not text_segs:
             return []
@@ -571,6 +580,7 @@ class ReviewChunkService:
             target_overrides=target_overrides,
             review_round=review_round,
             on_chunk_finished=on_chunk_finished,
+            flush_usage=flush_usage,
         )[0]
 
     @staticmethod

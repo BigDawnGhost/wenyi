@@ -1,10 +1,10 @@
-import { useId, useRef, useState, type FormEvent } from "react";
+import { useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import type { Capabilities, GlobalConfig } from "../../api/types";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
 import { ErrorNotice } from "../../components/ui/data";
-import { Input } from "../../components/ui/form";
+import { FieldError, Input, fieldAria } from "../../components/ui/form";
 import { Dialog } from "../../components/ui/misc";
 import { Select, SelectItem } from "../../components/ui/select";
 import { useI18n } from "../../i18n";
@@ -33,9 +33,8 @@ function rowsFor(llm: Document, id: string): ModelRow[] {
     .map(([ref, raw], key) => ({ key, original: ref, ...splitModelRef(ref), params: object(raw) }));
 }
 
-export function ProviderDialog({ initial, capabilities, draftLlm, returnFocus, onClose, onSave }: {
+export function ProviderDialog({ initial, capabilities, returnFocus, onClose, onSave }: {
   initial: EditorBase;
-  draftLlm: Document;
   capabilities?: Capabilities;
   returnFocus: () => HTMLElement | null;
   onClose: () => void;
@@ -45,6 +44,7 @@ export function ProviderDialog({ initial, capabilities, draftLlm, returnFocus, o
   const credentials = platform().capabilities.credentials;
   const CredentialField = credentials?.Field;
   const form = useId();
+  const errorId = `${form}-error`;
   const nameRef = useRef<HTMLInputElement>(null);
   const [{ llm, id, creating, revision }, setBase] = useState(initial);
   const providers = object(llm.providers);
@@ -58,7 +58,7 @@ export function ProviderDialog({ initial, capabilities, draftLlm, returnFocus, o
     : rowsFor(llm, id));
   const sequence = useRef(rows.length);
   const [edit, setEdit] = useState<string>();
-  const [error, setError] = useState("");
+  const [error, setError] = useState<{ message: string; field: string }>();
   const [saveError, setSaveError] = useState<unknown>();
   const [saving, setSaving] = useState(false);
   const inFlight = useRef(false);
@@ -103,16 +103,28 @@ export function ProviderDialog({ initial, capabilities, draftLlm, returnFocus, o
     && rows.length === Object.keys(models).length - Object.keys(otherModels).length
     && rows.every(({ original, model, provider: connection, params }) =>
       original === `${connection}/${model}` && params === models[original]);
+  const probeModels = useMemo(() => Object.fromEntries(rows
+    .filter(row => row.provider === id && row.model.trim())
+    .map(row => [row.model.trim(), row.params])), [rows, id]);
+  const probeDraft = useMemo(() => ({
+    connection: storedConnection ?? null,
+    draft_id: name,
+    provider,
+    models: probeModels,
+    api_key: edit?.trim() ?? null,
+  }), [storedConnection, name, provider, probeModels, edit]);
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (name !== id && Object.hasOwn(providers, name)) return setError(t("registry.duplicateId"));
+    if (name !== id && Object.hasOwn(providers, name))
+      return setError({ field: "provider-id", message: t("registry.duplicateId") });
     const registered = { ...otherModels };
     const renames: Renames = {};
     for (const row of rows) {
       const model = row.model.trim();
-      if (!model) return setError(t("providerSettings.modelRequired"));
+      if (!model) return setError({ field: `name-${row.key}`, message: t("providerSettings.modelRequired") });
       const ref = `${row.provider === id ? name : row.provider}/${model}`;
-      if (Object.hasOwn(registered, ref)) return setError(t("providerSettings.duplicateModel", { ref }));
+      if (Object.hasOwn(registered, ref))
+        return setError({ field: `name-${row.key}`, message: t("providerSettings.duplicateModel", { ref }) });
       registered[ref] = row.params;
       if (row.original && ref !== row.original) renames[row.original] = ref;
     }
@@ -143,7 +155,7 @@ export function ProviderDialog({ initial, capabilities, draftLlm, returnFocus, o
         <Button variant="outline" disabled={saving} onClick={onClose}>{t("common.cancel")}</Button>
         <Button type="submit" form={form} disabled={saving} aria-busy={saving || undefined}>{t("providerSettings.save")}</Button>
       </>}>
-      <form id={form} onSubmit={submit} onChange={() => setError("")}>
+      <form id={form} onSubmit={submit} onChange={() => setError(undefined)}>
        <fieldset disabled={saving} className="min-w-0 space-y-6">
         <section aria-labelledby={`${form}-connection`} className="space-y-3">
           <SettingsGroupHeader id={`${form}-connection`} title={t("providerSettings.connections")} />
@@ -151,6 +163,7 @@ export function ProviderDialog({ initial, capabilities, draftLlm, returnFocus, o
           <SettingsRow label={t("registry.connectionId")} description={t("registry.invalidId")} htmlFor="provider-id"
             control={<Input id="provider-id" className={SETTINGS_CONTROL_CLASSNAME}
               ref={nameRef} value={name} required pattern={idPattern}
+              {...fieldAria(errorId, error?.field === "provider-id" ? error.message : undefined)}
               onChange={e => setName(e.target.value)} />} />
           <SettingsRow label={t("providerSettings.apiProvider")} htmlFor={`provider-${id}`}
             control={<Select id={`provider-${id}`} className={SETTINGS_CONTROL_CLASSNAME}
@@ -180,7 +193,8 @@ export function ProviderDialog({ initial, capabilities, draftLlm, returnFocus, o
                 value={String(provider.api_key_env ?? "")}
                 onChange={e => patchProvider({ api_key_env: e.target.value || null })} />} />
           )}
-          {!creating && <ModelConnectivity connection={id} saved={unchanged && edit === undefined} disabled={saving} />}
+          <ModelConnectivity draft={probeDraft}
+            disabled={saving || !new RegExp(`^${idPattern}$`).test(name) || name.length > 200} />
           </Card>
         </section>
         <section aria-labelledby={`${form}-models`} className="space-y-3">
@@ -193,8 +207,7 @@ export function ProviderDialog({ initial, capabilities, draftLlm, returnFocus, o
           <Card className="divide-y divide-border">
           {!rows.length && <p className="px-4 py-3 text-sm text-muted-foreground">{t("connectivity.none")}</p>}
           {rows.map(row => {
-            const inUse = row.original !== undefined &&
-              (isModelReferenced(llm, row.original) || isModelReferenced(draftLlm, row.original));
+            const inUse = row.original !== undefined && isModelReferenced(llm, row.original);
             const connection = row.provider;
             const adapter = connection === id ? provider : object(providers[connection]);
             return (
@@ -207,6 +220,7 @@ export function ProviderDialog({ initial, capabilities, draftLlm, returnFocus, o
                     onClick={() => setRows(rows.filter(item => item.key !== row.key))}>
                     <Trash2 className="h-4 w-4" />
                   </Button>}
+                  error={error?.field === `name-${row.key}` ? error.message : undefined} errorId={errorId}
                   value={row.model} onChange={model => changeModel(row.key, { model })} />
                 {Object.keys(providers).some(key => key !== id) &&
                   <SettingsRow label={t("providerSettings.apiConnection")} htmlFor={`connection-${row.key}`}
@@ -220,7 +234,7 @@ export function ProviderDialog({ initial, capabilities, draftLlm, returnFocus, o
           })}
           </Card>
         </section>
-        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+        {error && <FieldError id={errorId} message={error.message} />}
        </fieldset>
       </form>
       <ErrorNotice error={saveError} />

@@ -9,6 +9,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
+import pytest
 from wenyi_core.agents.polisher import Polisher
 from wenyi_core.agents.reviewer import Reviewer, ReviewOutputError
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
@@ -116,7 +117,7 @@ class TestReviewer(unittest.TestCase):
             _cfg(),
         )
 
-        with self.assertRaisesRegex(ReviewOutputError, "reviewed_segments_mismatch"):
+        with pytest.raises(ReviewOutputError, match="reviewed_segments_mismatch"):
             reviewer.review(["あ"], ["甲"])
 
     def test_reviewer_rejects_missing_completion_marker(self):
@@ -132,7 +133,7 @@ class TestReviewer(unittest.TestCase):
             _cfg(),
         )
 
-        with self.assertRaisesRegex(ReviewOutputError, "completion_marker_missing"):
+        with pytest.raises(ReviewOutputError, match="completion_marker_missing"):
             reviewer.review(["あ"], ["甲"])
 
     def test_reviewer_accepts_completion_receipt_before_issues(self):
@@ -165,7 +166,7 @@ class TestReviewer(unittest.TestCase):
             _cfg(),
         )
 
-        with self.assertRaisesRegex(ReviewOutputError, "completion_marker_missing"):
+        with pytest.raises(ReviewOutputError, match="completion_marker_missing"):
             reviewer.review(["あ"], ["甲"])
 
     def test_reviewer_rejects_truncated_issues_after_completion_marker(self):
@@ -174,7 +175,7 @@ class TestReviewer(unittest.TestCase):
             _cfg(),
         )
 
-        with self.assertRaisesRegex(ReviewOutputError, "unsafe_json_repair"):
+        with pytest.raises(ReviewOutputError, match="unsafe_json_repair"):
             reviewer.review(["あ"], ["甲"])
 
     def test_reviewer_rejects_bare_issue_array_without_completion_receipt(self):
@@ -195,7 +196,7 @@ class TestReviewer(unittest.TestCase):
             _cfg(),
         )
 
-        with self.assertRaisesRegex(ReviewOutputError, "response_not_object"):
+        with pytest.raises(ReviewOutputError, match="response_not_object"):
             reviewer.review(["あ"], ["甲"])
 
     def test_reviewer_rejects_wrong_completion_receipt(self):
@@ -204,7 +205,7 @@ class TestReviewer(unittest.TestCase):
             _cfg(),
         )
 
-        with self.assertRaisesRegex(ReviewOutputError, "reviewed_segments_mismatch"):
+        with pytest.raises(ReviewOutputError, match="reviewed_segments_mismatch"):
             reviewer.review(["あ", "い"], ["甲", "乙"])
 
     def test_missing_final_brace_is_repaired_without_another_model_call(self):
@@ -244,9 +245,9 @@ class TestReviewer(unittest.TestCase):
             _cfg(),
         )
 
-        with self.assertRaisesRegex(
+        with pytest.raises(
             ReviewOutputError,
-            "invalid_issue_suggestion",
+            match="invalid_issue_suggestion",
         ):
             reviewer.review(["あ"], ["甲"])
 
@@ -268,7 +269,7 @@ class TestReviewer(unittest.TestCase):
             _cfg(),
         )
 
-        with self.assertRaisesRegex(ReviewOutputError, "invalid_issue_index"):
+        with pytest.raises(ReviewOutputError, match="invalid_issue_index"):
             reviewer.review(["あ"], ["甲"])
 
     def test_malformed_chunk_is_recursively_split_and_logged(self):
@@ -346,7 +347,7 @@ class TestReviewer(unittest.TestCase):
         segments = [Segment(index=i, source=f"源文{i}", target=f"译文{i}") for i in range(4)]
         with tempfile.TemporaryDirectory() as directory:
             debug = ReviewRunStore(directory)
-            with self.assertRaisesRegex(RuntimeError, "interrupted after the first child"):
+            with pytest.raises(RuntimeError, match="interrupted after the first child"):
                 chunks.review_chapter(segments, [], chapter_index=7, debug=debug)
             issues = chunks.review_chapter(segments, [], chapter_index=7, debug=debug)
             self.assertEqual([issue["index"] for issue in issues], [0, 2])
@@ -371,7 +372,7 @@ class TestReviewer(unittest.TestCase):
         cfg = _cfg()
         cfg.pipeline.review_output_retries = 1
         client = FakeClient(handler=handler)
-        with self.assertRaisesRegex(ReviewOutputError, "truncated_response"):
+        with pytest.raises(ReviewOutputError, match="truncated_response"):
             Orchestrator(cfg, client=client)._review._chunks.review_chapter(
                 [Segment(index=0, source="源文", target="译文")], []
             )
@@ -404,7 +405,7 @@ class TestReviewer(unittest.TestCase):
         cfg.pipeline.review_output_retries = 2
         client = FakeClient(handler=lambda m, t, j: "")
 
-        with self.assertRaisesRegex(ReviewOutputError, "malformed_json"):
+        with pytest.raises(ReviewOutputError, match="malformed_json"):
             Orchestrator(cfg, client=client)._review._chunks.review_chapter(
                 [Segment(index=0, source="源文", target="译文")],
                 [],

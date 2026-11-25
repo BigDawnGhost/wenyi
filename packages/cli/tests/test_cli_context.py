@@ -73,16 +73,23 @@ def test_installed_entry_point_runs_real_bootstrap_before_help(tmp_path, monkeyp
     monkeypatch.setattr("sys.argv", ["wenyi", "--config", str(config_path), "--help"])
     with pytest.raises(SystemExit) as exit_info:
         entry.load()()
+    assert exit_info.value.code == 1
+    assert "config file not found" in capsys.readouterr().err
+    assert not config_path.exists()
+
+    config_path.write_text("language: {source: en, target: zh}\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as exit_info:
+        entry.load()()
     assert exit_info.value.code == 0
-    assert config_path.is_file()
     assert "translate" in capsys.readouterr().out
 
 
-def test_early_argument_error_still_creates_selected_config(tmp_path):
+def test_early_argument_error_with_missing_config_fails_fast(tmp_path):
     config_path = tmp_path / "invalid-command.yaml"
     result = CliRunner().invoke(create_app(), ["-c", str(config_path), "unknown-command"])
-    assert result.exit_code == 2
-    assert config_path.is_file()
+    assert result.exit_code == 1
+    assert "config file not found" in result.output
+    assert not config_path.exists()
 
 
 @pytest.mark.parametrize("scope", ["chapter", "full"])

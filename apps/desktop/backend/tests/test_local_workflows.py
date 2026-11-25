@@ -20,7 +20,9 @@ from wenyi_backend.execution.bindings import workflow_dependencies
 from wenyi_backend.execution.contracts import ExecutionRequest
 from wenyi_core.models.document import Document
 from wenyi_core.storage.sqlite import SqliteStorage
+from wenyi_desktop.local_backend import LocalBackend
 from wenyi_desktop.main import create_context
+from wenyi_desktop.settings import DesktopSettings
 
 
 def upload(client, *, name="book.txt", content=b"A short paragraph.\n"):
@@ -203,14 +205,18 @@ def test_parse_completion_waits_for_run_lock_release(desktop, monkeypatch):
         assert releasing.wait(5), "The parse worker did not reach its run-lock exit"
         job = current_context().repository.list_jobs(pid)[0]
         assert job["status"] == "running"
-        assert current_context().repository.get_project(pid)["status"] == "parsing"
+        project = current_context().repository.get_project(pid)
+        assert project is not None
+        assert project["status"] == "parsing"
         configuration = {"yaml": "pipeline: {review: false}"}
         assert client.put(f"/projects/{pid}/config", json=configuration).status_code == 409
     finally:
         release.set()
 
     assert wait_job(job["run_id"])["status"] == "done"
-    assert current_context().repository.get_project(pid)["status"] == "uploaded"
+    project = current_context().repository.get_project(pid)
+    assert project is not None
+    assert project["status"] == "uploaded"
     configured = client.put(f"/projects/{pid}/config", json=configuration)
     assert configured.status_code == 200, configured.text
     assert backend.get_job(job["id"])["status"] == "done"
@@ -232,7 +238,9 @@ def test_terminal_failure_status_waits_for_run_lock_release(desktop_context, mon
             try:
                 yield
             finally:
-                statuses_at_release.append(current_context().repository.get_job(job)["status"])
+                released_job = current_context().repository.get_job(job)
+                assert released_job is not None
+                statuses_at_release.append(released_job["status"])
 
     monkeypatch.setattr(SqliteStorage, "lock", observe_lock_exit)
     request = ExecutionRequest("translation", pid, "terminal-run")
@@ -240,9 +248,13 @@ def test_terminal_failure_status_waits_for_run_lock_release(desktop_context, mon
     runner.record_terminal_status(request, dependencies, RuntimeError("Stopped"), status=status)
 
     assert statuses_at_release == ["running"]
-    assert current_context().repository.get_job(job)["status"] == status
-    assert current_context().repository.get_job(job)["error"] == "Stopped"
-    assert current_context().repository.get_project(pid)["status"] == status
+    terminal_job = current_context().repository.get_job(job)
+    assert terminal_job is not None
+    assert terminal_job["status"] == status
+    assert terminal_job["error"] == "Stopped"
+    project = current_context().repository.get_project(pid)
+    assert project is not None
+    assert project["status"] == status
 
     runner.record_terminal_status(request, dependencies, RuntimeError("Stopped"), status=status)
     assert statuses_at_release == ["running"]
@@ -264,9 +276,15 @@ def test_late_terminal_status_updates_only_its_own_job(desktop_context):
         RuntimeError("Old failure"),
     )
 
-    assert current_context().repository.get_job(old)["status"] == "error"
-    assert current_context().repository.get_job(latest)["status"] == "queued"
-    assert current_context().repository.get_project(pid)["status"] == "translating"
+    old_job = current_context().repository.get_job(old)
+    assert old_job is not None
+    assert old_job["status"] == "error"
+    latest_job = current_context().repository.get_job(latest)
+    assert latest_job is not None
+    assert latest_job["status"] == "queued"
+    project = current_context().repository.get_project(pid)
+    assert project is not None
+    assert project["status"] == "translating"
 
 
 def test_terminal_status_survives_unavailable_storage(desktop_context, monkeypatch):
@@ -287,8 +305,10 @@ def test_terminal_status_survives_unavailable_storage(desktop_context, monkeypat
             RuntimeError("Worker failed"),
         )
 
-    assert current_context().repository.get_job(job)["status"] == "error"
-    assert current_context().repository.get_job(job)["error"] == "Worker failed"
+    failed_job = current_context().repository.get_job(job)
+    assert failed_job is not None
+    assert failed_job["status"] == "error"
+    assert failed_job["error"] == "Worker failed"
 
 
 @pytest.mark.parametrize("name,fmt", [("book.txt", "text"), ("book.md", "markdown")])
@@ -478,7 +498,9 @@ def test_chapter_edits_history_glossary_and_review_are_project_scoped(desktop):
     response = client.put(glossary + "/Amy", json={"source": "Alice", "target": "爱丽丝"})
     assert response.status_code == 200, response.text
     assert store.get_term("Amy") is None
-    assert store.get_term("Alice").target == "爱丽丝"
+    alice_term = store.get_term("Alice")
+    assert alice_term is not None
+    assert alice_term.target == "爱丽丝"
     assert client.get(f"/projects/{other}/glossary/terms").json() == []
     assert client.delete(glossary + "/Alice").status_code == 200
     store.write_artifact(
@@ -646,6 +668,8 @@ def test_parallel_translation_isolates_pause_failure_resume_and_usage(
         create_context(tmp_path / "parallel", api_token="offline-test-token"),
         build_client=build_client,
     )
+    backend = context.repository
+    assert isinstance(backend, LocalBackend)
     with (
         use_context(context),
         TestClient(
@@ -686,7 +710,9 @@ def test_parallel_translation_isolates_pause_failure_resume_and_usage(
                 runs[pid] = response.json()["job_id"]
             assert all(event.wait(5) for event in saved.values())
             for pid in pids:
-                assert context.repository.get_job_by_arq_id(runs[pid])["status"] == "running"
+                parallel_job = backend.get_job_by_arq_id(runs[pid])
+                assert parallel_job is not None
+                assert parallel_job["status"] == "running"
                 assert client.get(f"/projects/{pid}/workflow").json()["run_id"] == runs[pid]
             assert len({id(clients[pid][0]) for pid in pids}) == 3
             assert client.get("/settings").status_code == 200
@@ -699,7 +725,9 @@ def test_parallel_translation_isolates_pause_failure_resume_and_usage(
             assert wait_job(runs[first])["status"] == outcome
             for pid in pids[1:]:
                 assert not cancelled[pid].is_set()
-                assert context.repository.get_job_by_arq_id(runs[pid])["status"] == "running"
+                parallel_job = backend.get_job_by_arq_id(runs[pid])
+                assert parallel_job is not None
+                assert parallel_job["status"] == "running"
 
             response = client.post(f"/projects/{first}/resume")
             assert response.status_code == 200, response.text
@@ -707,7 +735,9 @@ def test_parallel_translation_isolates_pause_failure_resume_and_usage(
             assert resumed != runs[first]
             assert wait_job(resumed)["status"] == "done"
             for pid in pids[1:]:
-                assert context.repository.get_job_by_arq_id(runs[pid])["status"] == "running"
+                parallel_job = backend.get_job_by_arq_id(runs[pid])
+                assert parallel_job is not None
+                assert parallel_job["status"] == "running"
         finally:
             for event in release.values():
                 event.set()
@@ -715,7 +745,7 @@ def test_parallel_translation_isolates_pause_failure_resume_and_usage(
         for pid in pids[1:]:
             assert wait_job(runs[pid])["status"] == "done"
         for pid in pids:
-            store = context.repository.storage_for(pid)
+            store = backend.storage_for(pid)
             try:
                 assert store.load_chapter(0).text_segments[0].target == "译0"
                 assert (
@@ -729,7 +759,9 @@ def test_parallel_translation_isolates_pause_failure_resume_and_usage(
                 expected = sum(
                     fake.usage.summary()["totals"]["total_tokens"] for fake in clients[pid]
                 )
-                assert store.load_usage()["totals"]["total_tokens"] == expected > 0
+                usage = store.load_usage()
+                assert usage is not None
+                assert usage["totals"]["total_tokens"] == expected > 0
             finally:
                 store.close()
 
@@ -780,7 +812,9 @@ def test_shutdown_waits_for_saved_translation_checkpoint(desktop, monkeypatch):
     stopped.result(timeout=5)
     job = wait_job(response.json()["job_id"])
     assert job["status"] == "paused", job
-    assert current_context().repository.get_project(pid)["status"] == "paused"
+    paused_project = current_context().repository.get_project(pid)
+    assert paused_project is not None
+    assert paused_project["status"] == "paused"
     store = backend.storage_for(pid)
     assert store.load_chapter(0).text_segments[0].target == "译0"
     assert store.list_events(event_type="task_paused")
@@ -797,6 +831,7 @@ def test_two_apps_isolate_same_project_requests_workers_and_thread_context(tmp_p
     from wenyi_backend.context import current_context
     from wenyi_backend.global_settings import load_settings, save_settings
     from wenyi_backend.workers import tasks
+    from wenyi_backend.workers.signing import SIGNATURE_FIELD, sign_task
     from wenyi_desktop.local_credentials import CredentialStore, credential_store
     from wenyi_desktop.main import create_app
 
@@ -810,12 +845,16 @@ def test_two_apps_isolate_same_project_requests_workers_and_thread_context(tmp_p
     def parse_with_owner_check(project_id, storage, config, progress, services):
         context = current_context()
         owner = contexts.index(context)
-        assert context.repository.get_project(project_id)["name"] == f"Owner {owner}"
+        owner_backend = context.repository
+        assert isinstance(owner_backend, LocalBackend)
+        owner_project = owner_backend.get_project(project_id)
+        assert owner_project is not None
+        assert owner_project["name"] == f"Owner {owner}"
         assert config.pipeline.polish is bool(owner)
         providers = load_settings().config.llm.providers
         name = next(iter(providers))
         assert credential_store().snapshot(providers)[name] == f"fake-owner-{owner}"
-        assert Path(storage.run_dir).is_relative_to(context.repository.workspace)
+        assert Path(storage.run_dir).is_relative_to(owner_backend.workspace)
         entered.wait(timeout=5)
         return parse(project_id, storage, config, progress, services)
 
@@ -830,17 +869,22 @@ def test_two_apps_isolate_same_project_requests_workers_and_thread_context(tmp_p
                 credentials=CredentialStore(workspace),
             )
             contexts.append(context)
-            stack.callback(context.repository.close)
+            owner_repository = context.repository
+            assert isinstance(owner_repository, LocalBackend)
+            stack.callback(owner_repository.close)
             with use_context(context):
                 settings = load_settings()
                 document = global_document(settings.config)
                 document["pipeline"]["polish"] = bool(owner)
                 save_settings(json.dumps(document), settings.default_template, settings.revision)
                 name = next(iter(settings.config.llm.providers))
-                context.settings_store.credentials.update(
+                owner_settings = context.settings_store
+                assert isinstance(owner_settings, DesktopSettings)
+                owner_settings.credentials.update(
                     name, mode="manual", storage="session", secret=f"fake-owner-{owner}"
                 )
                 backend = context.repository
+                assert isinstance(backend, LocalBackend)
                 backend.create_project(f"Owner {owner}", "en", "zh", {}, project_id=pid)
                 source = backend.project_dir(pid) / "source.txt"
                 source.parent.mkdir(parents=True)
@@ -878,12 +922,13 @@ def test_two_apps_isolate_same_project_requests_workers_and_thread_context(tmp_p
         async def workers():
             # Deliberately bind the wrong ambient owner for one worker: ctx must win.
             with use_context(contexts[0]):
-                await asyncio.gather(
-                    *(
-                        tasks.run_parse({"backend": context}, project_id=pid, run_id=run_id)
-                        for context in contexts
-                    )
-                )
+
+                def dispatch(context):
+                    payload = {"project_id": pid, "run_id": run_id}
+                    payload[SIGNATURE_FIELD] = sign_task("run_parse", payload, context.api_token)
+                    return tasks.run_parse({"backend": context}, **payload)
+
+                await asyncio.gather(*(dispatch(context) for context in contexts))
                 assert current_context() is contexts[0]
 
         with ThreadPoolExecutor(max_workers=3) as pool:

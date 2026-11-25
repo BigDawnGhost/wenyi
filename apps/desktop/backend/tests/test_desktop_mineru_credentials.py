@@ -1,7 +1,9 @@
 """MinerU credentials are independent of LLM connections and never persisted as values."""
 
 import json
+import logging
 import sqlite3
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event, current_thread
 
@@ -12,8 +14,10 @@ from wenyi_desktop.local_credentials import (
     CredentialConflict,
     CredentialStore,
     CredentialUnavailable,
+    system_keyring,
 )
 from wenyi_desktop.main import create_app
+from wenyi_desktop.settings import DesktopSettings
 
 
 class FakeVault:
@@ -89,7 +93,7 @@ def test_status_checks_vault_safely(tmp_path, failure):
         vault.values = dict.fromkeys(vault.values, "fake\nunsafe")
     else:
 
-        def unreadable(*args):
+        def unreadable(service, reference):
             raise RuntimeError("private-vault-error")
 
         vault.get_password = unreadable
@@ -204,8 +208,8 @@ def test_source_revision_detects_concurrent_clear(tmp_path):
     store = CredentialStore(tmp_path, vault=vault)
     original = vault.set_password
 
-    def concurrent_clear(*args):
-        original(*args)
+    def concurrent_clear(service, reference, value):
+        original(service, reference, value)
         store.save_mineru(clear=True)
 
     vault.set_password = concurrent_clear
@@ -288,8 +292,8 @@ def test_api_auth_status_and_redacted_validation(desktop_context, caplog):
             assert "fake-service" not in json.dumps(list(conn.iterdump()))
         assert client.put(path, headers=headers, json={"clear": True}).status_code == 200
         assert not client.get(path, headers=headers).json()["available"]
-    assert "fake-service" not in caplog.text
-    assert "fake-invalid" not in caplog.text
+    assert not any("fake-service" in message for message in caplog.messages)
+    assert not any("fake-invalid" in message for message in caplog.messages)
 
 
 def test_auto_storage_fallback_and_clear_keeps_environment(tmp_path, monkeypatch):
@@ -319,8 +323,8 @@ def test_concurrent_save_retains_winner(tmp_path):
     store.save_mineru(secret="fake-old")
     original = vault.set_password
 
-    def concurrent_save(*args):
-        original(*args)
+    def concurrent_save(service, reference, value):
+        original(service, reference, value)
         vault.set_password = original
         store.save_mineru(secret="fake-winner")
 
@@ -361,9 +365,13 @@ def test_each_context_binds_its_own_resolver(tmp_path):
             store.save_mineru(secret=f"fake-{name}", storage="session")
             context = create_context(workspace, credentials=store)
             contexts.append(context)
-            assert context.settings_store.credentials is store
-            assert context.mineru_token_resolver.__self__ is store
-            assert context.mineru_token_resolver() == f"fake-{name}"
+            settings = context.settings_store
+            assert isinstance(settings, DesktopSettings)
+            assert settings.credentials is store
+            resolver = context.mineru_token_resolver
+            assert resolver is not None
+            assert resolver.__self__ is store
+            assert resolver() == f"fake-{name}"
         assert contexts[0].mineru_token_resolver() == "fake-first"
     finally:
         for context in contexts:
@@ -402,3 +410,29 @@ def test_model_key_reveal_never_returns_environment_values(tmp_path, monkeypatch
     assert store.manual_secret("one", cfg) is None
     store.update("one", mode="manual", secret="fake-manual-model", storage="session")
     assert store.manual_secret("one", cfg) == "fake-manual-model"
+
+
+def test_vault_read_failure_logs_class_name_only(tmp_path, caplog):
+    class ExplodingVault(FakeVault):
+        def get_password(self, service, reference):
+            raise RuntimeError("vault backend exploded: internal-vault-details")
+
+    store = CredentialStore(tmp_path, vault=ExplodingVault())
+    store.save_mineru(secret="fake-service", storage="system")
+    with caplog.at_level(logging.WARNING, logger="wenyi_desktop.local_credentials"):
+        assert store.resolve_mineru_token() is None
+    assert any("RuntimeError" in message for message in caplog.messages)
+    assert not any("internal-vault-details" in message for message in caplog.messages)
+    assert not any("fake-service" in message for message in caplog.messages)
+
+
+def test_system_keyring_probe_failure_returns_none(monkeypatch, caplog):
+    class ExplodingKeyring:
+        @staticmethod
+        def get_keyring():
+            raise RuntimeError("keyring probe exploded")
+
+    monkeypatch.setitem(sys.modules, "keyring", ExplodingKeyring)
+    with caplog.at_level(logging.DEBUG, logger="wenyi_desktop.local_credentials"):
+        assert system_keyring() is None
+    assert any("RuntimeError" in message for message in caplog.messages)

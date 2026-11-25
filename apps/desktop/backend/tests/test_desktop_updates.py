@@ -1,31 +1,43 @@
 """Update admission uses temporary catalogs and mock tasks, never real providers."""
 
 import asyncio
+import hashlib
+import json
+import shutil
+import sqlite3
 import threading
+from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from wenyi_desktop import paths
+from wenyi_desktop.local_backend import LocalBackend
 from wenyi_desktop.local_runtime import LocalRuntime
-from wenyi_desktop.main import create_app, create_context
+from wenyi_desktop.main import DesktopServices, create_app, create_context
+from wenyi_desktop.settings import DesktopSettings
 from wenyi_desktop.updates import UpdateAdmissionMiddleware, UpdateGuard
 
 
 @pytest.fixture
 def context(tmp_path):
     context = create_context(tmp_path / "updates", api_token="test-token")
+    backend = context.repository
+    assert isinstance(backend, LocalBackend)
     yield context
-    context.repository.close()
+    backend.close()
 
 
 def test_authenticated_private_endpoints_and_isolation(context, tmp_path):
     app = create_app(context=context)
     context.telemetry.runtime = SimpleNamespace(accepting=True, idle=True)
     other = create_context(tmp_path / "other", api_token="other-token")
+    other_services = other.telemetry
+    assert isinstance(other_services, DesktopServices)
     other_app = create_app(context=other)
-    other.telemetry.runtime = SimpleNamespace(accepting=True, idle=True)
+    other_services.runtime = cast(LocalRuntime, SimpleNamespace(accepting=True, idle=True))
     try:
         # Lifespan intentionally not entered: no real workers are needed.
         client = TestClient(app)
@@ -55,7 +67,9 @@ def test_authenticated_private_endpoints_and_isolation(context, tmp_path):
         assert client.post("/desktop/updates/prepare", headers=headers).status_code == 503
         assert client.post("/desktop/updates/cancel", headers=headers).status_code == 503
     finally:
-        other.repository.close()
+        other_backend = other.repository
+        assert isinstance(other_backend, LocalBackend)
+        other_backend.close()
 
 
 def test_backup_plan_requires_frozen_authenticated_admission(context, monkeypatch, tmp_path):
@@ -99,22 +113,28 @@ def test_explicit_root_overrides_xdg_for_catalog_credentials_and_backup_plan(
     monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
     root = tmp_path / "workspace"
     context = create_context(root, api_token="test-token")
+    backend = context.repository
+    assert isinstance(backend, LocalBackend)
+    settings = context.settings_store
+    assert isinstance(settings, DesktopSettings)
+    services = context.telemetry
+    assert isinstance(services, DesktopServices)
     try:
-        assert context.repository.database == root / "catalog.sqlite3"
-        assert context.settings_store.credentials.database == context.repository.database
-        context.telemetry.runtime = SimpleNamespace(accepting=True, idle=True)
+        assert backend.database == root / "catalog.sqlite3"
+        assert settings.credentials.database == backend.database
+        services.runtime = cast(LocalRuntime, SimpleNamespace(accepting=True, idle=True))
         client = TestClient(create_app(context=context))
         headers = {"Authorization": "Bearer test-token"}
         assert client.post("/desktop/updates/prepare", headers=headers).status_code == 204
         response = client.post("/desktop/updates/backup-plan", headers=headers)
         assert response.status_code == 200
         assert response.json()["sources"] == [
-            {"path": str(context.repository.database), "name": "catalog.sqlite3"},
+            {"path": str(backend.database), "name": "catalog.sqlite3"},
         ]
         assert not data_home.exists()
         assert not (private_profile / "Wenyi").exists()
     finally:
-        context.repository.close()
+        backend.close()
 
 
 def test_missing_authoritative_project_refuses_backup_plan(context, monkeypatch):
@@ -192,7 +212,7 @@ def test_actual_runtime_ownership_blocks_even_terminal_catalog(context, owned):
         pid = context.repository.create_project("terminal", "en", "zh", {})
         job = context.repository.create_job(pid, "export", "mock", run_id="mock")
         context.repository.set_job_status(job, "done")
-        task = asyncio.create_task(asyncio.sleep(60))
+        task = asyncio.create_task(asyncio.Event().wait())
         if owned == "_active":
             runtime._active["mock"] = task
         else:
@@ -343,3 +363,59 @@ def test_failed_check_reopens_without_cancel_request(context, monkeypatch, cance
         assert not guard.closed
 
     asyncio.run(run())
+
+
+def _digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_backup(workspace: Path, version: str, sources: dict[str, Path]) -> Path:
+    """Mimic the native snapshot: hashed per-source copies, manifest written last."""
+    backup = workspace / "backups" / f"{version}-20261120-000000"
+    entries = []
+    for name, source in sources.items():
+        pairs = (
+            [(source, name)]
+            if source.is_file()
+            else [
+                (file, f"{name}/{file.relative_to(source).as_posix()}")
+                for file in sorted(source.rglob("*"))
+                if file.is_file() and not file.name.endswith(".lock")
+            ]
+        )
+        for file, relative in pairs:
+            target = backup / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(file, target)
+            entries.append({"path": relative, "size": file.stat().st_size, "sha256": _digest(file)})
+    manifest = {
+        "schema_version": 2,
+        "source_path": "",
+        "created_at": "2026-11-20T00:00:00Z",
+        "version": version,
+        "files": entries,
+        "sources": [{"name": name, "path": str(path)} for name, path in sources.items()],
+    }
+    (backup / "MANIFEST.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return backup
+
+
+def test_unrelated_startup_error_does_not_replace_live_sqlite(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    catalog = workspace / "catalog.sqlite3"
+    with sqlite3.connect(catalog) as connection:
+        connection.execute("CREATE TABLE example (value TEXT)")
+        connection.execute("INSERT INTO example VALUES ('before upgrade')")
+    _write_backup(workspace, "1.9.0", {"catalog.sqlite3": catalog})
+    with sqlite3.connect(catalog) as connection:
+        connection.execute("UPDATE example SET value = 'live data'")
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("unrelated startup error")
+
+    monkeypatch.setattr(LocalBackend, "__init__", unavailable)
+    with pytest.raises(RuntimeError, match="unrelated startup error"):
+        create_context(workspace)
+    with sqlite3.connect(catalog) as connection:
+        assert connection.execute("SELECT value FROM example").fetchone() == ("live data",)

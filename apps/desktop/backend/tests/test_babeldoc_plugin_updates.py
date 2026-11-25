@@ -8,6 +8,7 @@ import threading
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -31,9 +32,10 @@ def asset(content, name):
 
 def harness(tmp_path, monkeypatch, *, enabled=True):
     context = create_context(tmp_path, api_token="test-token")
-    context.telemetry.runtime = SimpleNamespace(accepting=True, idle=True)
+    telemetry = cast(Any, context.telemetry)
+    telemetry.runtime = SimpleNamespace(accepting=True, idle=True)
     app = create_app(context=context)
-    plugin = context.telemetry.babeldoc
+    plugin = telemetry.babeldoc
     plugin.target = "linux-x86_64"
     plugin.installation, plugin.version, plugin.enabled = "a" * 32, "0.1.0", enabled
     old = plugin.root / "installed" / plugin.installation

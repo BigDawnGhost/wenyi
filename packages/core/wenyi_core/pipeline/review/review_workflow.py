@@ -370,6 +370,7 @@ class ReviewService:
                             review_round=review_round,
                             target_overrides=state.target_overrides,
                             progress=progress,
+                            flush_usage=save_review_usage,
                         )
                         # Persist a mid-round checkpoint after scanning finishes.
                         checkpoint.save(state, review_round, phase="scan_done", latest=state.latest)

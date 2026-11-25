@@ -15,11 +15,14 @@ from openai import APIConnectionError, APITimeoutError
 from wenyi_core.agents.synopsis import Synopsizer
 from wenyi_core.agents.translator import Translator
 from wenyi_core.config import Config, LLMConfig
+from wenyi_core.llm.limits import RequestCancelled
 from wenyi_core.llm.providers.deepseek import DeepSeekClient
 from wenyi_core.llm.retrying import (
     EmptyResponseError,
+    RetryReporter,
     is_resumable_provider_interrupt,
     is_retryable_provider_error,
+    provider_retry,
     retry_reason,
 )
 from wenyi_core.llm.router import RoutedLLMClient
@@ -326,3 +329,73 @@ def test_orchestrator_retry_sink_writes_book_event_log():
             )
         assert event["event"] == "llm_retry_wait"
         assert event["reason"] == "http_502"
+
+
+def _cancel_reporter(events: list[dict[str, Any]]) -> RetryReporter:
+    return RetryReporter(
+        provider="deepseek",
+        profile="default",
+        stage="translation",
+        max_attempts=3,
+        emit=lambda event, **data: events.append({"event": event, **data}),
+        redact=lambda text: text,
+    )
+
+
+def test_provider_retry_checks_cancellation_before_the_first_attempt():
+    events: list[dict[str, Any]] = []
+    attempts = 0
+
+    def operation() -> str:
+        nonlocal attempts
+        attempts += 1
+        return "ok"
+
+    decorated = provider_retry(3, _cancel_reporter(events), should_cancel=lambda: True)(operation)
+    with pytest.raises(RequestCancelled):
+        decorated()
+    assert attempts == 0
+    assert events == []
+
+
+def test_provider_retry_stops_during_backoff_when_cancelled():
+    events: list[dict[str, Any]] = []
+    attempts = 0
+
+    def operation() -> str:
+        nonlocal attempts
+        attempts += 1
+        raise _HttpError(429)
+
+    def should_cancel() -> bool:
+        return attempts >= 1
+
+    decorated = provider_retry(
+        3, _cancel_reporter(events), sleep=lambda seconds: None, should_cancel=should_cancel
+    )(operation)
+    with pytest.raises(RequestCancelled):
+        decorated()
+    assert attempts == 1
+    assert all(event["event"] != "llm_retry_exhausted" for event in events)
+
+
+def test_provider_retry_default_sleep_polls_cancellation(monkeypatch):
+    monkeypatch.setattr("wenyi_core.llm.retrying.time.sleep", lambda seconds: None)
+    events: list[dict[str, Any]] = []
+    attempts = 0
+    polls = 0
+
+    def operation() -> str:
+        nonlocal attempts
+        attempts += 1
+        raise _HttpError(429)
+
+    def should_cancel() -> bool:
+        nonlocal polls
+        polls += 1
+        return polls > 2
+
+    decorated = provider_retry(3, _cancel_reporter(events), should_cancel=should_cancel)(operation)
+    with pytest.raises(RequestCancelled):
+        decorated()
+    assert attempts == 1

@@ -19,17 +19,19 @@ DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_API_KEY_ENV = "DEEPSEEK_API_KEY"
 
 
-def normalize_deepseek_usage(usage: Any) -> UsageSample | None:
+def normalize_deepseek_usage(usage: Any, *, max_tokens: int | None = None) -> UsageSample | None:
     """Normalize DeepSeek's top-level cache counters into shared usage accounting."""
     if usage is None:
         return None
     miss = read_usage_counter(usage, "prompt_cache_miss_tokens")
+    reported_max_tokens = read_usage_counter(usage, "max_tokens")
     return make_usage_sample(
         usage,
         cache_hit_tokens=read_usage_counter(usage, "prompt_cache_hit_tokens"),
         cache_miss_tokens=miss or 0,
         cache_write_tokens=0,
         uncached_tokens=miss,
+        max_tokens=reported_max_tokens if reported_max_tokens is not None else max_tokens,
     )
 
 
@@ -80,9 +82,9 @@ class DeepSeekClient(OpenAICompatibleBaseClient[DeepSeekOptions]):
     default_api_key_env = DEFAULT_API_KEY_ENV
     requires_api_key = True
 
-    def _normalize_usage(self, usage: Any) -> UsageSample | None:
+    def _normalize_usage(self, usage: Any, *, max_tokens: int | None = None) -> UsageSample | None:
         """Normalize DeepSeek's top-level cache fields into shared usage accounting."""
-        return normalize_deepseek_usage(usage)
+        return normalize_deepseek_usage(usage, max_tokens=max_tokens)
 
     def _build_request_kwargs(
         self,

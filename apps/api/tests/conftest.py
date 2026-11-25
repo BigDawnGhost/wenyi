@@ -105,7 +105,7 @@ def api(monkeypatch, pg_pool, tmp_path):
         data_dir=str(tmp_path / "data"),
         config_path=str(config),
         api_token=None,
-        redis_url="redis://127.0.0.1:56379/0",
+        redis_url=os.environ.get("WENYI_TEST_REDIS_URL", "redis://127.0.0.1:56379/0"),
     )
     monkeypatch.setattr(
         factory, "build_client", lambda cfg: MeteredFakeClient(handler=routing_handler)

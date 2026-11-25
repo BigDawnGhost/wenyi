@@ -31,6 +31,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::diagnostics::{Diagnostics, Event, Source};
+use crate::ipc_error::codes;
 
 /// Stable application identity, independent of the platform's registration scheme.
 pub const APP_ID: &str = "org.wenyi.desktop";
@@ -470,7 +471,7 @@ pub fn desktop_notifications_set_locale(
 
     if window.label() != "main" || !window.url().is_ok_and(|url| crate::trusted(&url)) {
         return Err(crate::ipc_error::IpcError::new(
-            "notifications_untrusted_window",
+            codes::NOTIFICATIONS_UNTRUSTED_WINDOW,
             "Desktop notifications are unavailable.",
         ));
     }
@@ -488,7 +489,7 @@ pub async fn desktop_notifications_permission(
 
     if window.label() != "main" || !window.url().is_ok_and(|url| crate::trusted(&url)) {
         return Err(crate::ipc_error::IpcError::new(
-            "notifications_untrusted_window",
+            codes::NOTIFICATIONS_UNTRUSTED_WINDOW,
             "Desktop notifications are unavailable.",
         ));
     }
@@ -514,7 +515,7 @@ pub async fn desktop_notifications_permission(
     .await
     .map_err(|_| {
         crate::ipc_error::IpcError::new(
-            "notifications_unavailable",
+            codes::NOTIFICATIONS_UNAVAILABLE,
             "Desktop notifications are unavailable.",
         )
     })
@@ -544,7 +545,7 @@ async fn notification_preference(
 
     if window.label() != "main" || !window.url().is_ok_and(|url| crate::trusted(&url)) {
         return Err(crate::ipc_error::IpcError::new(
-            "notifications_untrusted_window",
+            codes::NOTIFICATIONS_UNTRUSTED_WINDOW,
             "Desktop notifications are unavailable.",
         ));
     }
@@ -558,7 +559,7 @@ async fn notification_preference(
     .and_then(Result::ok)
     .ok_or_else(|| {
         crate::ipc_error::IpcError::new(
-            "notifications_settings_unavailable",
+            codes::NOTIFICATIONS_SETTINGS_UNAVAILABLE,
             "Notification settings could not be read or saved. Please retry.",
         )
     })
