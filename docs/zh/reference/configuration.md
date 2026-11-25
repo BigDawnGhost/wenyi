@@ -356,7 +356,7 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 | `pipeline.align_retry_limit` | `2` | 额外结构输出尝试次数；`0` 关闭。 |
 | `pipeline.rolling_context_tokens` | `512` | 前文译文预算，整数 ≥ 0，按 `cl100k_base` 计数。 |
 | `pipeline.book_understanding` | `true` | 生成覆盖完整原文的章节梗概和全书概览。 |
-| `pipeline.prescan_concurrency` | `4` | 章节梗概并发；`1` 为顺序执行。 |
+| `pipeline.prescan_concurrency` | `4` | 章节梗概与全书梗概归并并发；`1` 为顺序执行。 |
 | `pipeline.synopsis_source_tokens` | `8000` | 每个章节梗概原文块的 token 预算，正整数。 |
 | `pipeline.synopsis_reduce_tokens` | `12000` | 每组摘要归并内容、生成摘要及风格分析章节梗概块的 token 预算，正整数。 |
 | `pipeline.glossary_note_workers` | `0` | CLI：`0` 关闭；`1`–`16` 指定并行词条数。[Web/Desktop 项目开关](../guide/workspace.md#创建项目)开启时使用 4 个 worker。 |

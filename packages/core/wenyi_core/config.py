@@ -80,7 +80,7 @@ pipeline:
   rolling_context_tokens: 512 # Recent translation budget in tokens (tiktoken cl100k_base)
   glossary_note_workers: 0 # Incremental evidence notes: 0 disables, 1-16 workers per batch
   book_understanding: true # Prescan complete chapters for digests and a whole-book synopsis; disable to save prescan cost
-  prescan_concurrency: 4 # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
+  prescan_concurrency: 4 # Concurrent prescan workers for chapter digests and book-synopsis reduction; 1 runs serially
   # Prescan content budgets in cl100k_base tokens; prompt/context overhead is additional.
   # Larger values reduce splitting but may exceed model limits or reduce summary quality.
   synopsis_source_tokens: 8000 # Maximum source tokens per chapter-digest chunk
@@ -211,9 +211,7 @@ class PipelineConfig(BaseModel):
 
     # Prescan for a synopsis and chapter digests; disable to save prescan cost.
     book_understanding: bool = True
-    prescan_concurrency: int = (
-        4  # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
-    )
+    prescan_concurrency: int = 4  # Concurrent prescan workers for chapter digests and book-synopsis reduction; 1 runs serially
     # Prescan content budgets in cl100k_base tokens, excluding prompt/context overhead.
     synopsis_source_tokens: int = Field(default=8000, gt=0)
     synopsis_reduce_tokens: int = Field(default=12000, gt=0)

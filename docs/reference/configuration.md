@@ -373,7 +373,7 @@ described under [scope](#scope).
 | `pipeline.align_retry_limit` | `2` | Additional structural-output attempts; `0` disables them. |
 | `pipeline.rolling_context_tokens` | `512` | Preceding translation budget, integer ≥ 0, counted with `cl100k_base`. |
 | `pipeline.book_understanding` | `true` | Generate full-source chapter digests and a book synopsis. |
-| `pipeline.prescan_concurrency` | `4` | Chapter-digest concurrency; use `1` for sequential work. |
+| `pipeline.prescan_concurrency` | `4` | Concurrency for chapter digests and book-synopsis reduction; use `1` for sequential work. |
 | `pipeline.synopsis_source_tokens` | `8000` | Positive integer token budget for each chapter-digest source chunk. |
 | `pipeline.synopsis_reduce_tokens` | `12000` | Positive integer token budget for each digest merge group, generated summary, and the style-analysis digest block. |
 | `pipeline.glossary_note_workers` | `0` | CLI: `0` disables; `1`–`16` sets parallel note workers. The [Web/Desktop project switch](../guide/workspace.md#create-a-project) uses 4 when enabled. |
