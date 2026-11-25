@@ -336,3 +336,158 @@ def test_retry_success_keeps_transcript_and_does_not_split(caplog):
     assert len(messages) == 1
     assert "attempt=1/2" in messages[0]
     assert not any("binary split" in m for m in messages)
+
+
+def test_single_paragraph_empty_leaf_recovers_via_corrective_followup(caplog):
+    """A single-paragraph leaf returning '' recovers via one corrective follow-up turn."""
+    secret = "SECRET_WATERMARK_SENTINEL"
+    sources = ["First paragraph.", "Second paragraph.", "Third paragraph.", secret]
+    recorded_messages: list[list[dict[str, str]]] = []
+
+    def handler(messages, tier, json_mode):
+        recorded_messages.append(list(messages))
+        if len(messages) > 2 and "non-empty string" in messages[-1]["content"]:
+            return json.dumps({"translations": ["Literal rendering"]}, ensure_ascii=False)
+        batch = _numbered_sources(messages[-1]["content"])
+        return json.dumps(
+            {"translations": ["" if s == secret else f"译:{s}" for s in batch]},
+            ensure_ascii=False,
+        )
+
+    translator = Translator(FakeClient(handler=handler), _config(align_retry_limit=1))
+    with caplog.at_level(logging.WARNING, logger="wenyi_core.agents.translator"):
+        result = translator.translate_batch(sources)
+
+    assert result == [
+        "译:First paragraph.",
+        "译:Second paragraph.",
+        "译:Third paragraph.",
+        "Literal rendering",
+    ]
+    # Follow-up must extend the exact leaf conversation prefix for KV-cache reuse.
+    follow_up = recorded_messages[-1]
+    leaf_initial = recorded_messages[-2]
+    assert follow_up[: len(leaf_initial)] == leaf_initial
+    assert follow_up[len(leaf_initial)]["role"] == "assistant"
+    assert follow_up[-1]["role"] == "user"
+    assert any("retrying with non-empty reminder" in r.getMessage() for r in caplog.records)
+    assert all(secret not in r.getMessage() for r in caplog.records)
+
+
+def test_single_paragraph_batch_empty_recovers_and_keeps_full_transcript():
+    """A 1-paragraph batch returning '' recovers in one follow-up and keeps the full transcript."""
+    calls = 0
+
+    def handler(messages, tier, json_mode):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return json.dumps({"translations": [""]})
+        assert len(messages) == 4
+        assert messages[2]["role"] == "assistant"
+        assert messages[3]["role"] == "user"
+        return json.dumps({"translations": ["Recovered."]})
+
+    translator = Translator(FakeClient(handler=handler), _config(align_retry_limit=1))
+    targets, turn, indices = translator.translate_batch_with_transcript(["Lone line."])
+
+    assert targets == ["Recovered."]
+    assert indices == [0]
+    assert calls == 2
+    assert turn is not None
+    assert [msg["role"] for msg in turn] == ["system", "user", "assistant", "user", "assistant"]
+
+
+@pytest.mark.parametrize(
+    "followup_payload",
+    [
+        json.dumps({"translations": [""]}),
+        json.dumps({"translations": [None]}),
+        json.dumps({"translations": []}),
+        "not json at all",
+    ],
+    ids=["blank", "null", "wrong_count", "invalid_json"],
+)
+def test_single_paragraph_empty_followup_still_rejects_bad_output(followup_payload):
+    """Persistent blank or malformed follow-up output must still raise AlignmentError."""
+
+    def handler(messages, tier, json_mode):
+        if len(messages) > 2:
+            return followup_payload
+        return json.dumps({"translations": [""]})
+
+    translator = Translator(FakeClient(handler=handler), _config(align_retry_limit=0))
+    with pytest.raises(AlignmentError, match="Single-paragraph fallback failed at paragraph 0"):
+        translator.translate_batch(["Source line."])
+
+
+def test_allow_empty_translations_skips_corrective_followup():
+    """MinerU allow_empty_translations accepts '' immediately without a follow-up call."""
+    client = FakeClient(handler=lambda *_: json.dumps({"translations": [""]}))
+    translator = Translator(client, _config(align_retry_limit=1))
+
+    assert translator.translate_batch(["OCR noise"], allow_empty_translations=True) == [""]
+    assert len(client.calls) == 1
+
+
+def test_single_paragraph_empty_falls_back_to_plain_text_mode(caplog):
+    """If the JSON follow-up still returns '', retry once in plain-text mode (json_mode=False)."""
+    from wenyi_core.models.glossary import GlossaryTerm
+
+    seen_calls: list[tuple[list[dict[str, str]], bool]] = []
+
+    def handler(messages, tier, json_mode):
+        seen_calls.append((list(messages), json_mode))
+        if json_mode:
+            # Both initial JSON call and corrective JSON follow-up collapse to "".
+            return json.dumps({"translations": [""]})
+        return '"...Instructor Song, we brought the materials."'
+
+    translator = Translator(FakeClient(handler=handler), _config(align_retry_limit=0))
+    terms = [
+        GlossaryTerm(source="宋教习", target="Instructor Song", type="person"),
+        GlossaryTerm(source="无关词", target="Unrelated Term", type="other"),
+    ]
+    with caplog.at_level(logging.WARNING, logger="wenyi_core.agents.translator"):
+        targets, turn, indices = translator.translate_batch_with_transcript(
+            ["“……宋教习。”"],
+            glossary_terms=terms,
+            style="Concise literary prose.",
+            context="Prior translated paragraph.",
+            book_synopsis="Long whole-book synopsis.",
+            chapter_digest="Current chapter digest.",
+            annotation_contexts=[[{"target_key": "n1", "source": "Keep this note."}]],
+            next_source="Following source paragraph.",
+        )
+
+    assert targets == ['"...Instructor Song, we brought the materials."']
+    assert turn is None
+    assert indices is None
+    assert [jm for _, jm in seen_calls] == [True, True, False]
+    plain_sys = seen_calls[2][0][0]["content"]
+    plain_user = seen_calls[2][0][1]["content"]
+    # Matched glossary, style, and annotation context are preserved; unmatched terms omitted.
+    assert "Instructor Song" in plain_sys
+    assert "Unrelated Term" not in plain_sys
+    assert "Concise literary prose." in plain_sys
+    assert "Keep this note." in plain_user
+    assert any("plain-text mode" in r.getMessage() for r in caplog.records)
+
+    # Plain-text fallback also unwraps an accidental JSON wrapper and rejects persistent blanks.
+    wrapped = FakeClient(
+        handler=lambda _m, _t, jm: (
+            json.dumps({"translations": [""]})
+            if jm
+            else json.dumps({"translations": ["Unwrapped text."]})
+        )
+    )
+    assert Translator(wrapped, _config(align_retry_limit=0)).translate_batch(["“……啊。”"]) == [
+        "Unwrapped text."
+    ]
+
+    always_empty = FakeClient(
+        handler=lambda _m, _t, jm: json.dumps({"translations": [""]}) if jm else ""
+    )
+    with pytest.raises(AlignmentError, match="Single-paragraph fallback failed at paragraph 0"):
+        Translator(always_empty, _config(align_retry_limit=0)).translate_batch(["Source."])
+    assert len(always_empty.calls) == 3
