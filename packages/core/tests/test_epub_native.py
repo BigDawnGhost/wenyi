@@ -439,3 +439,24 @@ def test_export_creates_missing_language_in_empty_metadata(tmp_path):
     ns = {"opf": "http://www.idpf.org/2007/opf", "dc": "http://purl.org/dc/elements/1.1/"}
     assert opf.findtext("opf:metadata/dc:language", namespaces=ns) == "zh-Hans"
     assert opf.find("opf:metadata/dc:title", ns) is None
+
+
+def test_nav_title_repeating_book_title_uses_translated_book_title():
+    from wenyi_core.assemble.epub_native import _nav_titles
+
+    meta = {
+        "epub_nav_titles": ["特拉福买家俱乐部", "目录"],
+        "epub_nav_titles_translated": ["Trafford Buyer Club", "Contents"],
+    }
+
+    assert _nav_titles(
+        meta, "特拉福买家俱乐部", "The Trafford Buyers Club", "特拉福买家俱乐部"
+    ) == {
+        "特拉福买家俱乐部": "The Trafford Buyers Club",
+        "目录": "Contents",
+    }
+    # Without a translated book title the saved nav translation stands.
+    assert (
+        _nav_titles(meta, "特拉福买家俱乐部", "特拉福买家俱乐部-wenyi-en", None)["特拉福买家俱乐部"]
+        == "Trafford Buyer Club"
+    )

@@ -32,6 +32,44 @@ def resource_specs(meta: dict[str, object]) -> list[tuple[int, str]]:
     return specs
 
 
+def _translated_list(meta: Mapping[str, object], key: str) -> list[str]:
+    """Positional translations; blank slots keep the matching source value."""
+    raw = meta.get(key)
+    if not isinstance(raw, list):
+        return []
+    return [item.strip() if isinstance(item, str) else "" for item in raw]
+
+
+def _nav_titles(
+    meta: Mapping[str, object],
+    book_title: str,
+    export_title: str,
+    original_title: str | None,
+) -> dict[str, str]:
+    """Map each source navigation-document label to its saved translation.
+
+    A label that repeats the book title uses the translated book title, so the navigation
+    page cannot name the book differently from the package metadata.
+    """
+    sources = meta.get("epub_nav_titles")
+    if not isinstance(sources, list):
+        return {}
+    translated = _translated_list(meta, "epub_nav_titles_translated")
+    titles = (
+        {
+            source: target
+            for source, target in zip(sources, translated)
+            if isinstance(source, str) and source and target
+        }
+        if len(translated) == len(sources)
+        else {}
+    )
+    book = book_title.strip()
+    if original_title and book and book in sources and export_title.strip():
+        titles[book] = export_title.strip()
+    return titles
+
+
 def options(
     chapters: Iterable[Chapter],
     meta: dict[str, object],
@@ -151,6 +189,8 @@ def options(
                     "original_title": original_title,
                     "description": description,
                     "subjects": subjects or [],
+                    "creators": _translated_list(meta, "epub_creators_translated"),
+                    "nav_titles": _nav_titles(meta, book_title, export_title, original_title),
                 }
                 if target_lang is not None
                 else None

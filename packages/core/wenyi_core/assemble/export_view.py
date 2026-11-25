@@ -98,13 +98,18 @@ class ExportViewStore(RunStore):
                 meta[key] = normalize_quotes(
                     meta[key], self._quote_style, target_lang=self._target_lang
                 )
-        if isinstance(meta.get("epub_subjects_translated"), list):
-            meta["epub_subjects_translated"] = [
-                normalize_quotes(item, self._quote_style, target_lang=self._target_lang)
-                if isinstance(item, str)
-                else item
-                for item in meta["epub_subjects_translated"]
-            ]
+        for key in (
+            "epub_subjects_translated",
+            "epub_creators_translated",
+            "epub_nav_titles_translated",
+        ):
+            if isinstance(meta.get(key), list):
+                meta[key] = [
+                    normalize_quotes(item, self._quote_style, target_lang=self._target_lang)
+                    if isinstance(item, str)
+                    else item
+                    for item in meta[key]
+                ]
         for entry in (
             meta.get("toc_entries", []) if isinstance(meta.get("toc_entries"), list) else []
         ):

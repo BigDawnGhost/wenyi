@@ -298,6 +298,48 @@ def test_title_string_conversion_and_empty_fallback_remain_unchanged(title_proje
     ]
 
 
+def test_title_translator_resamples_structurally_repaired_reply():
+    from wenyi_core.agents.title_translator import TitleTranslator
+    from wenyi_core.llm.json_parser import UnsafeJsonRepairError
+
+    leaked = '{"titles":["Xishan Baishi</titles>}Wait, JSON only.{'
+    replies = [leaked, '{"titles":["Xishan Baishi"]}']
+    client = FakeClient(handler=lambda messages, tier, json_mode: replies.pop(0))
+    config = Config.from_dict(
+        {"language": {"source": "zh", "target": "en"}, "llm": {"preset": "fake"}}
+    )
+
+    assert TitleTranslator(client, config).translate(["夕山白石"], "") == ["Xishan Baishi"]
+
+    client = FakeClient(handler=lambda messages, tier, json_mode: leaked)
+    with pytest.raises(UnsafeJsonRepairError):
+        TitleTranslator(client, config).translate(["夕山白石"], "")
+    assert len(client.calls) == 2
+
+
+def test_plan_titles_queues_epub_creators_and_nav_titles():
+    manifest = {
+        "title": "特拉福买家俱乐部",
+        "fmt": "epub",
+        "chapters": [],
+        "meta": {
+            "opf_path": "OEBPS/content.opf",
+            "book_title_translated": "The Trafford Buyers Club",
+            "epub_creators": ["夕山白石"],
+            "epub_nav_titles": ["目录"],
+        },
+    }
+    plan = plan_titles(manifest, {})
+    assert [(item.field, item.source, item.list_index) for item in plan.pending] == [
+        ("epub_creators_translated", "夕山白石", 0),
+        ("epub_nav_titles_translated", "目录", 0),
+    ]
+    plan.apply(plan.pending, ["Xishan Baishi", "Contents"])
+    assert plan.manifest["meta"]["epub_creators_translated"] == ["Xishan Baishi"]
+    assert plan.manifest["meta"]["epub_nav_titles_translated"] == ["Contents"]
+    assert plan_titles(plan.manifest, {}).pending == []
+
+
 def test_plan_titles_scopes_opf_metadata_and_handles_subject_resume():
     manifest = {
         "title": "Shadow Empire",

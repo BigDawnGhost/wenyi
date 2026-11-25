@@ -15,7 +15,7 @@ import re
 from ..alignment.objects import marked_sources
 from ..glossary.store import GlossaryStore
 from ..i18n import genres
-from ..llm.json_parser import JsonParseError
+from ..llm.json_parser import JsonParseError, UnsafeJsonRepairError, parse_json_result
 from ..llm.preflight import fit_prompt_to_context_window
 from ..llm.retrying import TruncatedResponseError
 from ..models.glossary import TYPE_NAVIGATION, GlossaryTerm
@@ -25,6 +25,56 @@ from .note_tools import batch_note_tools
 
 _LOGGER = logging.getLogger(__name__)
 _LEGACY_GLOSSARY_PLACEHOLDER_RE = re.compile(r"\$(?:\{glossary\}|glossary\b)")
+# A reply shaped like a JSON object (a brace followed by a key, or empty), a string array, or a
+# whole single-quoted literal. Prose that merely opens with a bracket ("[System] …",
+# "{name} said", "['Tis the season.") does not match.
+_JSON_ATTEMPT_RE = re.compile(
+    r"""^\s*(?:\{\s*(?:"|\w+\s*:|\})|\[\s*"|[\[{]\s*'.*[\]}]\s*$)""", re.DOTALL
+)
+# The translations key as JSON-like output writes it: quoted, or unquoted right after an
+# opening brace. Prose such as "The translations: …" does not match.
+_ENVELOPE_KEY_RE = re.compile(r"""(?:(["'])translations\1|\{\s*translations)\s*:""")
+_FENCE_RE = re.compile(r"```[^\n]*\n(.*?)\n?```", re.DOTALL)
+
+
+def _fence_body(text: str) -> tuple[str, bool]:
+    """Return ``text`` without a surrounding code fence and whether one was present."""
+    fence = _FENCE_RE.fullmatch(text)
+    # Several fenced blocks joined by commentary are not one fenced reply.
+    if fence is None or "```" in fence.group(1):
+        return text, False
+    return fence.group(1).strip(), True
+
+
+def _plain_text_target(text: str, source: str) -> str:
+    """Return the paragraph from a plain-text-mode reply, refusing JSON wrappers.
+
+    An intact single-item ``translations`` envelope is unwrapped. A reply that mentions the
+    envelope key the source lacks, or that is JSON-shaped while the source is not, may carry
+    model reasoning around the translation and is rejected. A code fence around prose is
+    peeled unless the source paragraph is itself fenced.
+    """
+    body, fenced = _fence_body(text)
+    if _JSON_ATTEMPT_RE.match(body):
+        try:
+            parsed = parse_json_result(body)
+        except JsonParseError:
+            parsed = None
+        if parsed is not None and parsed.safe_for_complete_payload:
+            value = parsed.value
+            items = value.get("translations") if isinstance(value, dict) else None
+            if isinstance(items, list) and len(items) == 1 and isinstance(items[0], str):
+                return items[0].strip()
+    source = source.strip()
+    source_body, source_fenced = _fence_body(source)
+    if _ENVELOPE_KEY_RE.search(text) and not _ENVELOPE_KEY_RE.search(source):
+        raise AlignmentError("The plain-text translation fallback returned a JSON wrapper")
+    if _JSON_ATTEMPT_RE.match(body) and not _JSON_ATTEMPT_RE.match(source_body):
+        raise AlignmentError("The plain-text translation fallback returned a JSON wrapper")
+    # A fence embedded in commentary ("Here is the translation: ```…```") is not a translation.
+    if not fenced and "```" in text and "```" not in source:
+        raise AlignmentError("The plain-text translation fallback returned commentary")
+    return body if fenced and not source_fenced else text
 
 
 class AlignmentError(Exception):
@@ -268,7 +318,9 @@ class Translator(Agent):
         # Transient provider errors are retried only by the transport. Only JSON protocol errors in
         # successful responses enter alignment recovery, avoiding duplicate retries for 401/403/5xx errors.
         try:
-            data, raw = self._complete_json_turn(messages, operation="translation.body")
+            data, raw = self._complete_json_turn(
+                messages, operation="translation.body", require_complete_payload=True
+            )
             if tools is not None and isinstance(data, dict) and set(data) == {"read_note"}:
                 try:
                     page = tools.call("read_note", data["read_note"])
@@ -284,10 +336,30 @@ class Translator(Agent):
                         },
                     ]
                 )
-                data, raw = self._complete_json_turn(messages, operation="translation.body")
+                data, raw = self._complete_json_turn(
+                    messages, operation="translation.body", require_complete_payload=True
+                )
         except TruncatedResponseError as error:
             raise AlignmentError(
                 "The translation response reached the output token limit"
+            ) from error
+        except UnsafeJsonRepairError as error:
+            # Repair can fold trailing reasoning or a second attempt into a translation string
+            # while still producing the expected count, so only intact JSON may become a target.
+            if n == 1:
+                _LOGGER.warning(
+                    "Single-paragraph translation JSON needed structural repair; retrying in "
+                    "plain-text mode"
+                )
+                plain = self._translate_one_plain_text(
+                    sources[0],
+                    glossary_terms,
+                    style,
+                    (annotation_contexts or [[]])[0],
+                )
+                return [plain], None
+            raise AlignmentError(
+                "The translation JSON returned by the model needed structural repair"
             ) from error
         except JsonParseError as error:
             raise AlignmentError(
@@ -362,7 +434,13 @@ class Translator(Agent):
             },
         ]
         try:
-            data, retry_raw = self._complete_json_turn(follow_up, operation="translation.body")
+            data, retry_raw = self._complete_json_turn(
+                follow_up, operation="translation.body", require_complete_payload=True
+            )
+        except UnsafeJsonRepairError as error:
+            raise _EmptyTranslationError(
+                "The empty-translation follow-up needed structural JSON repair"
+            ) from error
         except TruncatedResponseError as error:
             raise AlignmentError(
                 "The translation response reached the output token limit"
@@ -459,15 +537,7 @@ class Translator(Agent):
             raise AlignmentError(
                 "The translation response reached the output token limit"
             ) from error
-        text = (raw or "").strip()
-        if text.startswith("{"):
-            try:
-                parsed = json.loads(text)
-            except json.JSONDecodeError:
-                parsed = None
-            if isinstance(parsed, dict) and "translations" in parsed:
-                items = self._extract_batch_items(parsed, 1)
-                text = items[0].strip()
+        text = _plain_text_target((raw or "").strip(), source)
         if not text:
             raise _EmptyTranslationError("The model returned an empty or non-string translation")
         return text

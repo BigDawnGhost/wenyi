@@ -157,6 +157,153 @@ class TestTranslatorAlignment(unittest.TestCase):
 
         self.assertEqual(len(client.calls), 1)
 
+    def test_structurally_repaired_batch_is_retried_instead_of_saved(self):
+        """A malformed reply whose repair happens to match the count must not leak into targets."""
+        leaked = (
+            '{"translations":["A","B"</translations] }</translations>}'
+            "Wait, the output format requires JSON object only. Let me produce the correct JSON.{"
+        )
+        # json-repair turns this reply into three strings, matching the three sources.
+        replies = [leaked, json.dumps({"translations": ["译0", "译1", "译2"]}, ensure_ascii=False)]
+
+        def handler(messages, tier, json_mode):
+            del messages, tier, json_mode
+            return replies.pop(0)
+
+        client = FakeClient(handler=handler)
+        translator = Translator(client, self._config())
+
+        out = translator.translate_batch(["あ", "い", "う"])
+
+        self.assertEqual(out, ["译0", "译1", "译2"])
+        self.assertEqual(len(client.calls), 2)
+
+    def test_structurally_repaired_single_paragraph_uses_plain_text_mode(self):
+        modes: list[bool] = []
+
+        def handler(messages, tier, json_mode):
+            del messages, tier
+            modes.append(json_mode)
+            if json_mode:
+                return '{"translations":["译文</translations>}Wait, JSON only.{'
+            return "译文"
+
+        translator = Translator(FakeClient(handler=handler), self._config())
+
+        self.assertEqual(translator.translate_batch(["あ"]), ["译文"])
+        self.assertEqual(modes, [True, False])
+
+    def test_plain_text_fallback_rejects_broken_json_envelope(self):
+        def handler(messages, tier, json_mode):
+            del messages, tier, json_mode
+            return '{"translations":["译文</translations>}Wait, JSON only.{'
+
+        translator = Translator(FakeClient(handler=handler), self._config())
+
+        with pytest.raises(Exception, match="failed at paragraph 0"):
+            translator.translate_batch(["あ"])
+
+    def test_plain_text_fallback_accepts_only_intact_json_envelopes(self):
+        cases = {
+            "fenced broken": '```json\n{"translations":["译文</translations>}Wait.{\n```',
+            "bare broken array": '["译文</translations>}Wait, JSON only.{',
+            "other object": '{"translation":"译文"}',
+            "unquoted key": '{translations: ["译文"]} Wait, let me produce correct JSON.',
+            "empty object": "{}",
+            "single-quoted list": "['译文']",
+            "single-quoted object": "{'translation': '译文'}",
+            "two fences with commentary": "```\n译文\n```\nWait, JSON only.\n```\n译文\n```",
+            "commentary with fence": 'Here is the translation:\n```json\n["译文"]\n```',
+            "reasoning prefix": 'Wait, the output format requires JSON only {"translations":["译文"]}',
+        }
+        for label, reply in cases.items():
+            with self.subTest(label):
+                translator = Translator(
+                    FakeClient(
+                        handler=lambda messages, tier, json_mode, reply=reply: (
+                            '{"translations":["x"</translations>}' if json_mode else reply
+                        )
+                    ),
+                    self._config(),
+                )
+                with pytest.raises(Exception, match="failed at paragraph 0"):
+                    translator.translate_batch(["あ"])
+
+        for source, reply in (
+            # Reasoning before an envelope is rejected even for a JSON source.
+            ('{"名称": "值"}', 'Wait, JSON only. {"translations":["value"]}'),
+            ("あ", "Wait, JSON only. {'translations': ['The night was cold.']}"),
+            # A prose source mentioning "translations:" does not exempt a broken envelope.
+            ("他检查了译文：全错了。", '{"translations":["He checked."} Wait, JSON only.'),
+        ):
+            with self.subTest(reply):
+                translator = Translator(
+                    FakeClient(
+                        handler=lambda messages, tier, json_mode, reply=reply: (
+                            '{"translations":["x"</translations>}' if json_mode else reply
+                        )
+                    ),
+                    self._config(),
+                )
+                with pytest.raises(Exception, match="failed at paragraph 0"):
+                    translator.translate_batch([source])
+
+        for source, reply, expected in (
+            ("译本：A和B", "The translations: A and B", "The translations: A and B"),
+            ("彼は{name}と言った。", "{name} said it.", "{name} said it."),
+            ("那是圣诞季。", "['Tis the season.", "['Tis the season."),
+            # A fenced code paragraph keeps its fence.
+            (
+                '```python\nx = "值"\n```',
+                '```python\nx = "value"\n```',
+                '```python\nx = "value"\n```',
+            ),
+            ("あ", '```json\n{"translations":["译文"]}\n```', "译文"),
+            ("あ", "[System] 译文", "[System] 译文"),
+            # A JSON source paragraph may translate to JSON in plain-text mode, but an intact
+            # envelope is still unwrapped.
+            ('{"名前": "値"}', '{"name": "value"}', '{"name": "value"}'),
+            ('{"名前": "値"}', '{"translations":["{\\"name\\": 1}"]}', '{"name": 1}'),
+            ("あ", "```\nThe night was cold.\n```", "The night was cold."),
+        ):
+            with self.subTest(reply):
+                translator = Translator(
+                    FakeClient(
+                        handler=lambda messages, tier, json_mode, reply=reply: (
+                            '{"translations":["x"</translations>}' if json_mode else reply
+                        )
+                    ),
+                    self._config(),
+                )
+                self.assertEqual(translator.translate_batch([source]), [expected])
+
+    def test_unsafe_repair_in_empty_follow_up_uses_plain_text_mode(self):
+        replies = [
+            json.dumps({"translations": [""]}),
+            '{"translations":["译文</translations>}Wait, JSON only.{',
+            "译文",
+        ]
+        modes: list[bool] = []
+
+        def handler(messages, tier, json_mode):
+            del messages, tier
+            modes.append(json_mode)
+            return replies.pop(0)
+
+        translator = Translator(FakeClient(handler=handler), self._config())
+
+        self.assertEqual(translator.translate_batch(["あ"]), ["译文"])
+        self.assertEqual(modes, [True, True, False])
+
+    def test_boundary_only_repair_is_still_accepted(self):
+        client = FakeClient(
+            handler=lambda messages, tier, json_mode: '```json\n{"translations":["译"]}\n```'
+        )
+        translator = Translator(client, self._config())
+
+        self.assertEqual(translator.translate_batch(["あ"]), ["译"])
+        self.assertEqual(len(client.calls), 1)
+
 
 class TestEmptyTargetResume(unittest.TestCase):
     def test_blank_target_counts_as_translated_for_resume_batches(self):

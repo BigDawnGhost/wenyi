@@ -20,7 +20,7 @@ use super::{
     archive::{open, read, rewrite, Archive},
     dom::{decode, decode_xml, escape, strip, Dom, Id, Kind},
     extract::{annotate, FragmentIndex, Resource, ANCHOR, ANNOTATION, INLINE, LINE, OBJECT},
-    ingest::{nav_labels, ncx_points, xml, Spec},
+    ingest::{nav_headings, nav_labels, ncx_points, xml, Spec},
     links::{is_html, resolve},
     tokenizer::xml_encoding,
     workers::ordered_map,
@@ -59,6 +59,12 @@ pub struct Presentation {
     pub description: Option<String>,
     #[serde(default)]
     pub subjects: Vec<String>,
+    /// Translated `dc:creator` values, aligned by position with the non-empty source creators.
+    #[serde(default)]
+    pub creators: Vec<String>,
+    /// Source navigation-document labels ("目录") mapped to their translations.
+    #[serde(default)]
+    pub nav_titles: HashMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -431,7 +437,7 @@ pub(crate) fn backfill(
         .map_or(&[][..], Vec::as_slice);
     if records.is_empty() && items.is_empty() {
         dom.clear(el);
-        breaks(dom, el, text);
+        breaks(dom, el, text.trim_matches(['\r', '\n']));
         return Ok(());
     }
     let offsets: Vec<_> = text
@@ -721,6 +727,27 @@ fn replace<'a>(
 }
 
 fn rewrite_nav(dom: &mut Dom, path: &str, options: &Options) {
+    // Declared navigation documents carry their page labels whatever their name or marker.
+    if let Some(p) = options
+        .presentation
+        .as_ref()
+        .filter(|p| !p.nav_titles.is_empty() && options.toc_paths.contains(path))
+    {
+        for node in nav_headings(dom) {
+            let source = dom.text(node, " ", true);
+            // An unchanged label (fallback or identical translation) is left alone, so a
+            // language declared on it or a wrapper inside the nav still applies.
+            if let Some(title) = p
+                .nav_titles
+                .get(&source)
+                .map(|s| strip(s))
+                .filter(|s| !s.is_empty() && *s != source)
+            {
+                let title = title.to_owned();
+                replace_label(dom, node, &title, &p.lang);
+            }
+        }
+    }
     let name = path.to_ascii_lowercase();
     if !name.contains("nav")
         && !name.contains("toc")
@@ -753,6 +780,61 @@ fn rewrite_nav(dom: &mut Dom, path: &str, options: &Options) {
             dom.clear(label);
             dom.append_text(label, title);
         }
+    }
+}
+
+/// Replace a label's text while keeping its anchors and wrapper markup.
+///
+/// The text goes into the innermost element of a single-element chain (`<h1><span id>…`);
+/// empty elements such as `<a id/>` anchors stay in place. A label whose text spans several
+/// elements is left untouched rather than flattened. Elements on the chain that declare a
+/// language are relabelled with the target language.
+fn replace_label(dom: &mut Dom, node: Id, title: &str, lang: &str) {
+    let mut chain = vec![node];
+    let mut target = node;
+    loop {
+        let children = dom.children(target).to_vec();
+        let filled: Vec<Id> = children
+            .iter()
+            .copied()
+            .filter(|&c| !dom.name(c).is_empty() && dom.meaningful(c))
+            .collect();
+        let loose_text = children
+            .iter()
+            .any(|&c| matches!(dom.kind(c), Kind::Text(t) if !strip(t).is_empty()));
+        match filled.as_slice() {
+            [] => {
+                for child in children {
+                    if matches!(dom.kind(child), Kind::Text(_)) {
+                        dom.detach(child);
+                    }
+                }
+                dom.append_text(target, title);
+                break;
+            }
+            [only] if !loose_text => {
+                target = *only;
+                chain.push(target);
+            }
+            _ => return,
+        }
+    }
+    let mut declared = false;
+    for &id in &chain {
+        for key in ["lang", "xml:lang"] {
+            if dom.attr(id, key).is_some() {
+                dom.set(id, key, lang.to_owned());
+                declared = true;
+            }
+        }
+    }
+    // A label inheriting another language from <head> or <nav> declares the target itself.
+    let inherited = dom
+        .parents(node)
+        .find_map(|a| dom.attr(a, "xml:lang").or_else(|| dom.attr(a, "lang")));
+    if !declared && inherited.is_some_and(|value| !same_language(value, lang)) {
+        dom.set(node, "lang", lang.to_owned());
+        dom.set(node, "xml:lang", lang.to_owned());
     }
 }
 
@@ -1094,15 +1176,28 @@ fn xml_append(
     }
 }
 
+/// Whether two language tags name the same language, treating a bare tag as covering its
+/// regional or script variants (`en` matches `en-US`, `zh-Hans` does not match `zh-Hant`).
+fn same_language(left: &str, right: &str) -> bool {
+    let normalize = |tag: &str| tag.trim().replace('_', "-").to_ascii_lowercase();
+    let (left, right) = (normalize(left), normalize(right));
+    let (short, long) = if left.len() <= right.len() {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    !short.is_empty() && (long == short || long.starts_with(&format!("{short}-")))
+}
+
 fn translate_opf_field(
     text: &str,
     node: roxmltree::Node<'_, '_>,
     value: &str,
     lang: &str,
     edits: &mut Vec<(ops::Range<usize>, String)>,
-) {
+) -> bool {
     if strip(node.text().unwrap_or("")) == value {
-        return;
+        return false;
     }
     let mut escaped_lang = String::new();
     escape(&mut escaped_lang, lang, true);
@@ -1119,6 +1214,7 @@ fn translate_opf_field(
         edits.push((at..at, format!(" {attribute}")));
     }
     edits.push(xml_contents(text, node, value));
+    true
 }
 
 fn rewrite_xml(
@@ -1139,10 +1235,16 @@ fn rewrite_xml(
                 .or_else(|| doc.descendants().find(|n| n.has_tag_name(name)))
         };
         let p = options.presentation.as_ref()?;
+        // Metadata nodes now carrying target-language text.
+        let mut localized = HashSet::new();
         if !p.title.is_empty() {
             if let Some(n) = field("title") {
                 if p.original_title.is_some() {
-                    translate_opf_field(&text, n, &p.title, &p.lang, &mut edits);
+                    // Only a changed saved translation is target-language text; the suffixed
+                    // fallback title and an unchanged fallback keep the source text.
+                    if translate_opf_field(&text, n, &p.title, &p.lang, &mut edits) {
+                        localized.insert(n.id());
+                    }
                 } else {
                     edits.push(xml_contents(&text, n, &p.title));
                 }
@@ -1186,7 +1288,9 @@ fn rewrite_xml(
             .filter(|s| !s.is_empty())
         {
             if let Some(n) = field("description") {
-                translate_opf_field(&text, n, desc, &p.lang, &mut edits);
+                if translate_opf_field(&text, n, desc, &p.lang, &mut edits) {
+                    localized.insert(n.id());
+                }
             }
         }
         if !p.subjects.is_empty() {
@@ -1206,8 +1310,81 @@ fn rewrite_xml(
             }
             for (node, translated) in subject_nodes.into_iter().zip(p.subjects.iter()) {
                 let value = strip(translated);
-                if !value.is_empty() {
-                    translate_opf_field(&text, node, value, &p.lang, &mut edits);
+                if !value.is_empty() && translate_opf_field(&text, node, value, &p.lang, &mut edits)
+                {
+                    localized.insert(node.id());
+                }
+            }
+        }
+        if !p.creators.is_empty() {
+            let mut creator_nodes: Vec<_> = doc
+                .descendants()
+                .filter(|n| {
+                    n.has_tag_name((DC, "creator")) && !strip(n.text().unwrap_or("")).is_empty()
+                })
+                .collect();
+            if creator_nodes.is_empty() {
+                creator_nodes = doc
+                    .descendants()
+                    .filter(|n| {
+                        n.has_tag_name("creator") && !strip(n.text().unwrap_or("")).is_empty()
+                    })
+                    .collect();
+            }
+            for (node, translated) in creator_nodes.into_iter().zip(p.creators.iter()) {
+                let value = strip(translated);
+                // A name already tagged in the target language is kept as published.
+                // Includes a language inherited from <metadata> or the package.
+                let tagged_target = node
+                    .ancestors()
+                    .find_map(|a| a.attribute(("http://www.w3.org/XML/1998/namespace", "lang")))
+                    .is_some_and(|lang| same_language(lang, &p.lang));
+                if !value.is_empty()
+                    && !tagged_target
+                    && translate_opf_field(&text, node, value, &p.lang, &mut edits)
+                {
+                    localized.insert(node.id());
+                }
+            }
+        }
+        // The package default language would otherwise keep labelling untagged metadata
+        // (such as a translated title) as the source language. Untagged metadata that stays
+        // untranslated keeps the source default through an explicit attribute.
+        const XML: &str = "http://www.w3.org/XML/1998/namespace";
+        if let Some(lang) = doc.root_element().attribute_node((XML, "lang")) {
+            if !same_language(lang.value(), &p.lang) {
+                let mut escaped = String::new();
+                escape(&mut escaped, &p.lang, true);
+                edits.push((lang.range_value(), escaped));
+                let mut source_lang = String::new();
+                escape(&mut source_lang, lang.value(), true);
+                let metadata = doc.descendants().find(|n| n.has_tag_name("metadata"));
+                for node in metadata
+                    .into_iter()
+                    .flat_map(|m| m.descendants())
+                    .filter(|n| {
+                        let dc = n.tag_name().namespace() == Some(DC);
+                        n.is_element()
+                        && !(dc
+                            && matches!(n.tag_name().name(), "identifier" | "language" | "date"))
+                        && n.attribute("property") != Some("dcterms:modified")
+                        // Dates, numbers and similar values carry no language.
+                        && n.text().unwrap_or("").chars().any(char::is_alphabetic)
+                        && !localized.contains(&n.id())
+                        && n.attribute_node((XML, "lang")).is_none()
+                        && n.ancestors()
+                            .skip(1)
+                            .find(|a| a.attribute_node((XML, "lang")).is_some())
+                            .is_some_and(|a| a == doc.root_element())
+                        && !strip(n.text().unwrap_or("")).is_empty()
+                    })
+                {
+                    let range = node.range();
+                    let at = range.start
+                        + text[range]
+                            .find(|c: char| c.is_whitespace() || matches!(c, '/' | '>'))
+                            .unwrap();
+                    edits.push((at..at, format!(" xml:lang=\"{source_lang}\"")));
                 }
             }
         }
@@ -1459,4 +1636,19 @@ pub fn export(source: &Path, destination: &Path, mut options: Options) -> Result
         extra,
     )?;
     Ok(warnings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::same_language;
+
+    #[test]
+    fn same_language_keeps_script_and_region_variants_apart() {
+        assert!(same_language("en", "en-US"));
+        assert!(same_language("EN_us", "en-us"));
+        assert!(same_language("zh", "zh-Hant"));
+        assert!(!same_language("zh-Hans", "zh-Hant"));
+        assert!(!same_language("en", "eng"));
+        assert!(!same_language("", "en"));
+    }
 }

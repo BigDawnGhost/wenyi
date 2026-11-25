@@ -1906,8 +1906,8 @@ class TestTitleTranslation(unittest.TestCase):
                 with (
                     patch.object(
                         client,
-                        "complete_json",
-                        return_value={"titles": []},
+                        "complete",
+                        return_value='{"titles": []}',
                     ),
                     self.assertRaisesRegex(RuntimeError, "invalid number"),
                 ):
@@ -2544,6 +2544,225 @@ class TestEpubTocMisdetectRegression(unittest.TestCase):
                 assert doc_title is not None
                 self.assertEqual(doc_title.find("text").get_text(), "Trafford & Sons Club")
                 self.assertEqual(ncx.find("navLabel").find("text").get_text(), "Chapter 1")
+
+    def test_epub_template_export_localizes_creator_nav_heading_and_package_lang(self):
+        """Author, nav-document heading and package language follow the target language."""
+        for metadata_lang, translate_title, nav_title in (
+            ("", True, "Contents"),
+            ("ja", True, "Contents"),
+            ("", False, "Contents"),
+            # A title "translation" that fell back to the source text keeps the source tag.
+            ("", "unchanged", "Contents"),
+            # Metadata already in the target language and an unchanged nav label stay as is.
+            ("en", True, "目录"),
+        ):
+            with self.subTest(metadata_lang=metadata_lang, translate_title=translate_title):
+                self._check_localized_metadata_export(metadata_lang, translate_title, nav_title)
+
+    def test_doc_toc_role_and_untyped_nav_headings_are_captured(self):
+        for nav_attr in (' role="doc-toc"', ""):
+            with self.subTest(nav_attr=nav_attr):
+                self._check_nav_heading_capture(nav_attr)
+
+    def _check_nav_heading_capture(self, nav_attr: str) -> None:
+        from wenyi_core.assemble.writer import assemble
+        from wenyi_core.ingest.epub_reader import read_epub
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src_epub = os.path.join(tmp, "book.epub")
+            with zipfile.ZipFile(src_epub, "w") as zf:
+                zf.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
+                zf.writestr(
+                    "META-INF/container.xml",
+                    '<?xml version="1.0"?><container version="1.0" '
+                    'xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                    '<rootfiles><rootfile full-path="OEBPS/content.opf" '
+                    'media-type="application/oebps-package+xml"/></rootfiles></container>',
+                )
+                zf.writestr(
+                    "OEBPS/content.opf",
+                    '<?xml version="1.0" encoding="utf-8"?>'
+                    '<package xmlns="http://www.idpf.org/2007/opf" version="3.0">'
+                    '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                    "<dc:title>书</dc:title><dc:language>zh</dc:language></metadata><manifest>"
+                    # A declared nav document whose name gives no hint of navigation.
+                    '<item id="nav" href="contents.xhtml" media-type="application/xhtml+xml" '
+                    'properties="nav"/>'
+                    '<item id="c1" href="ch1.xhtml" media-type="application/xhtml+xml"/>'
+                    '</manifest><spine><itemref idref="c1"/></spine></package>',
+                )
+                zf.writestr(
+                    "OEBPS/contents.xhtml",
+                    '<?xml version="1.0" encoding="utf-8"?>'
+                    '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>书</title></head>'
+                    f"<body><nav{nav_attr}><h1>目录</h1><ol>"
+                    '<li><a href="ch1.xhtml">第一章</a></li></ol></nav></body></html>',
+                )
+                zf.writestr(
+                    "OEBPS/ch1.xhtml",
+                    '<?xml version="1.0" encoding="utf-8"?>'
+                    '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>第一章</title></head>'
+                    "<body><h1>第一章</h1><p>正文。</p></body></html>",
+                )
+
+            doc = read_epub(src_epub, source_lang="zh", target_lang="en")
+            self.assertEqual(doc.meta["epub_nav_titles"], ["书", "目录"])
+            store = FileStorage(os.path.join(tmp, "state"))
+            store.init_from_document(doc)
+            manifest = store.load_manifest()
+            manifest["meta"]["epub_nav_titles_translated"] = ["Book", "Contents"]
+            store.save_manifest(manifest)
+            ch = store.load_chapter(0)
+            for seg in ch.segments:
+                seg.target = "Chapter 1" if seg.kind == "heading" else "Body text."
+            store.save_chapter(ch)
+            out_epub = os.path.join(tmp, "book.en.epub")
+            assemble(store, src_epub, out_epub, out_format="epub")
+            with zipfile.ZipFile(out_epub) as zf:
+                nav = BeautifulSoup(zf.read("OEBPS/contents.xhtml"), "html.parser")
+            self.assertEqual(nav.find("h1").get_text(), "Contents")
+
+    def _check_localized_metadata_export(
+        self, metadata_lang: str, translate_title: bool | str, nav_title: str
+    ) -> None:
+        from wenyi_core.assemble.writer import assemble
+        from wenyi_core.ingest.epub_reader import read_epub
+
+        metadata_attr = f' xml:lang="{metadata_lang}"' if metadata_lang else ""
+        with tempfile.TemporaryDirectory() as tmp:
+            src_epub = os.path.join(tmp, "book.epub")
+            out_epub = os.path.join(tmp, "book.en.epub")
+            with zipfile.ZipFile(src_epub, "w") as zf:
+                zf.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
+                zf.writestr(
+                    "META-INF/container.xml",
+                    '<?xml version="1.0"?><container version="1.0" '
+                    'xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                    '<rootfiles><rootfile full-path="OEBPS/content.opf" '
+                    'media-type="application/oebps-package+xml"/></rootfiles></container>',
+                )
+                zf.writestr(
+                    "OEBPS/content.opf",
+                    '<?xml version="1.0" encoding="utf-8"?>'
+                    '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" '
+                    'unique-identifier="id" xml:lang="zh-CN">'
+                    f'<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"{metadata_attr}>'
+                    '<dc:identifier id="id">urn:uuid:1</dc:identifier>'
+                    # A non-Dublin-Core creator must not shift translated creator positions.
+                    '<x:creator xmlns:x="urn:example">扩展作者</x:creator>'
+                    "<dc:title>特拉福买家俱乐部</dc:title><dc:creator>夕山白石</dc:creator>"
+                    "<dc:publisher>某出版社</dc:publisher><dc:language>zh</dc:language>"
+                    '<meta property="schema:accessibilitySummary">无障碍说明</meta>'
+                    '<meta property="dcterms:modified">2026-01-01T00:00:00Z</meta>'
+                    "</metadata><manifest>"
+                    '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" '
+                    'properties="nav"/>'
+                    '<item id="c1" href="ch1.xhtml" media-type="application/xhtml+xml"/>'
+                    '</manifest><spine><itemref idref="c1"/></spine></package>',
+                )
+                zf.writestr(
+                    "OEBPS/nav.xhtml",
+                    '<?xml version="1.0" encoding="utf-8"?>'
+                    '<html xmlns="http://www.w3.org/1999/xhtml" '
+                    'xmlns:epub="http://www.idpf.org/2007/ops">'
+                    '<head xml:lang="zh"><title>目录</title></head>'
+                    # The page heading sits in a wrapper just before the toc nav.
+                    '<body><div><h1 class="toc" xml:lang="zh"><a id="start"></a>目录</h1></div>'
+                    '<nav epub:type="toc"><ol>'
+                    '<li><a href="ch1.xhtml">第一章</a></li></ol></nav></body></html>',
+                )
+                zf.writestr(
+                    "OEBPS/ch1.xhtml",
+                    '<?xml version="1.0" encoding="utf-8"?>'
+                    '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>第一章</title></head>'
+                    "<body><h1>第一章</h1><p>正文。</p><p>第一行\n第二行</p></body></html>",
+                )
+
+            doc = read_epub(src_epub, source_lang="zh", target_lang="en")
+            self.assertEqual(doc.meta["epub_creators"], ["夕山白石"])
+            self.assertEqual(doc.meta["epub_nav_titles"], ["目录"])
+            store = FileStorage(os.path.join(tmp, "state"))
+            store.init_from_document(doc)
+            manifest = store.load_manifest()
+            if translate_title == "unchanged":
+                manifest["meta"]["book_title_translated"] = "特拉福买家俱乐部"
+            elif translate_title:
+                manifest["meta"]["book_title_translated"] = "The Trafford Buyers Club"
+            manifest["meta"]["epub_creators_translated"] = ["Xishan Baishi"]
+            manifest["meta"]["epub_nav_titles_translated"] = [nav_title]
+            manifest["chapters"][0]["title_translated"] = "Chapter 1"
+            for entry in manifest["meta"]["toc_entries"]:
+                entry["title_translated"] = "Chapter 1"
+            store.save_manifest(manifest)
+            ch = store.load_chapter(0)
+            # Models sometimes move a source line break to the edge of the translation.
+            targets = {"heading": "Chapter 1"}
+            body = iter(["Body text.\n", "First line\nsecond line"])
+            for seg in ch.segments:
+                seg.target = targets.get(seg.kind) or next(body)
+            store.save_chapter(ch)
+
+            assemble(store, src_epub, out_epub, out_format="epub")
+
+            with zipfile.ZipFile(out_epub, "r") as zf:
+                opf = BeautifulSoup(zf.read("OEBPS/content.opf"), "xml")
+                nav = BeautifulSoup(zf.read("OEBPS/nav.xhtml"), "html.parser")
+                ch1 = BeautifulSoup(zf.read("OEBPS/ch1.xhtml"), "html.parser")
+            title = opf.find("dc:title")
+            assert isinstance(title, Tag)
+            if translate_title == "unchanged":
+                self.assertEqual(
+                    (title.get_text(), title.get("xml:lang")), ("特拉福买家俱乐部", "zh-CN")
+                )
+            elif translate_title:
+                self.assertEqual(title.get_text(), "The Trafford Buyers Club")
+            else:
+                # The suffixed fallback still holds source text, so it keeps the source tag.
+                self.assertEqual(title.get_text(), "特拉福买家俱乐部-wenyi-en")
+                self.assertEqual(title.get("xml:lang"), "zh-CN")
+            package = opf.find("package")
+            assert isinstance(package, Tag)
+            self.assertEqual(package.get("xml:lang"), "en")
+            creator = opf.find("dc:creator")
+            assert isinstance(creator, Tag)
+            if metadata_lang == "en":
+                # The creator already inherits the target language, so it stays as published.
+                self.assertEqual((creator.get_text(), creator.get("xml:lang")), ("夕山白石", None))
+            else:
+                self.assertEqual(
+                    (creator.get_text(), creator.get("xml:lang")), ("Xishan Baishi", "en")
+                )
+            # Untranslated metadata keeps the source label it previously inherited.
+            inherited_source = None if metadata_lang else "zh-CN"
+            publisher = opf.find("dc:publisher")
+            assert isinstance(publisher, Tag)
+            self.assertEqual(
+                (publisher.get_text(), publisher.get("xml:lang")), ("某出版社", inherited_source)
+            )
+            summary = opf.find("meta", property="schema:accessibilitySummary")
+            assert isinstance(summary, Tag)
+            self.assertEqual(summary.get("xml:lang"), inherited_source)
+            self.assertIsNone(opf.find("meta", property="dcterms:modified").get("xml:lang"))
+            self.assertIsNone(opf.find("dc:identifier").get("xml:lang"))
+            nav_head_title = nav.find("title")
+            heading = nav.find("h1")
+            assert isinstance(nav_head_title, Tag) and isinstance(heading, Tag)
+            self.assertIsNotNone(heading.find("a", id="start"))
+            if nav_title == "目录":
+                self.assertEqual(
+                    (nav_head_title.get_text(), nav_head_title.get("lang")), ("目录", None)
+                )
+                self.assertEqual((heading.get_text(), heading.get("xml:lang")), ("目录", "zh"))
+            else:
+                # The <title> inherited zh from <head>, so it now declares the target itself.
+                self.assertEqual(
+                    (nav_head_title.get_text(), nav_head_title.get("xml:lang")), ("Contents", "en")
+                )
+                self.assertEqual((heading.get_text(), heading.get("xml:lang")), ("Contents", "en"))
+            self.assertEqual(nav.find("ol").find("a").get_text(), "Chapter 1")
+            paragraphs = ch1.find_all("p")
+            self.assertEqual(str(paragraphs[0]), "<p>Body text.</p>")
+            self.assertEqual(len(paragraphs[1].find_all("br")), 1)
 
 
 class TestEpubHrefWarnings(unittest.TestCase):

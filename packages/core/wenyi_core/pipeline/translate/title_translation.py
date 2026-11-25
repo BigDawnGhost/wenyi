@@ -201,38 +201,42 @@ def plan_titles(
                 plan.pending.append(
                     TitleRequest(epub_meta, book_title, field="book_title_translated")
                 )
-        raw_subjects = epub_meta.get("epub_subjects")
-        if isinstance(raw_subjects, list) and raw_subjects:
-            subjects = [
-                _flat(item) for item in raw_subjects if isinstance(item, str) and _flat(item)
-            ]
-            existing_subjects = epub_meta.get("epub_subjects_translated")
-            aligned_existing = (
-                existing_subjects
-                if isinstance(existing_subjects, list) and len(existing_subjects) == len(subjects)
-                else None
-            )
-            if subjects and (
-                aligned_existing is None
-                or any(not isinstance(item, str) or not item.strip() for item in aligned_existing)
-            ):
-                for idx, subject in enumerate(subjects):
-                    if (
-                        aligned_existing is not None
-                        and isinstance(aligned_existing[idx], str)
-                        and aligned_existing[idx].strip()
-                    ):
-                        continue
-                    plan.pending.append(
-                        TitleRequest(
-                            epub_meta,
-                            subject,
-                            field="epub_subjects_translated",
-                            list_index=idx,
-                            list_size=len(subjects),
-                        )
-                    )
+        for source_key, target_key in _EPUB_LIST_FIELDS:
+            _plan_list_field(plan, epub_meta, source_key, target_key)
     return plan
+
+
+# Positional EPUB metadata lists translated through the title prompt: short labels and names,
+# never prose.
+_EPUB_LIST_FIELDS = (
+    ("epub_subjects", "epub_subjects_translated"),
+    ("epub_creators", "epub_creators_translated"),
+    ("epub_nav_titles", "epub_nav_titles_translated"),
+)
+
+
+def _plan_list_field(
+    plan: TitlePlan, epub_meta: dict[str, Any], source_key: str, target_key: str
+) -> None:
+    """Queue missing positional translations while keeping already saved slots."""
+    raw = epub_meta.get(source_key)
+    if not isinstance(raw, list) or not raw:
+        return
+    sources = [_flat(item) for item in raw if isinstance(item, str) and _flat(item)]
+    existing = epub_meta.get(target_key)
+    aligned = existing if isinstance(existing, list) and len(existing) == len(sources) else None
+    for idx, source in enumerate(sources):
+        if aligned is not None and isinstance(aligned[idx], str) and aligned[idx].strip():
+            continue
+        plan.pending.append(
+            TitleRequest(
+                epub_meta,
+                source,
+                field=target_key,
+                list_index=idx,
+                list_size=len(sources),
+            )
+        )
 
 
 def title_batches(pending: list[TitleRequest]) -> list[list[TitleRequest]]:

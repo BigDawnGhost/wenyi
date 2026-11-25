@@ -20,6 +20,12 @@ class JsonParseError(WenyiError, ValueError):
     retryable: ClassVar[bool] = False
 
 
+class UnsafeJsonRepairError(JsonParseError):
+    """Model output parsed only after a repair that may have synthesized payload content."""
+
+    code: ClassVar[str] = "llm_unsafe_json_repair"
+
+
 @dataclass(frozen=True)
 class JsonParseResult:
     """Parsed JSON result with strict/repair and structural-safety metadata."""

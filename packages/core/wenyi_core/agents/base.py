@@ -13,7 +13,7 @@ from ..errors import WenyiError
 from ..i18n.policy.models import Phase
 from ..i18n.prompts import render
 from ..llm.base import LLMClient
-from ..llm.json_parser import JsonParseError, parse_json_loose
+from ..llm.json_parser import JsonParseError, UnsafeJsonRepairError, parse_json_result
 from ..llm.retrying import EmptyResponseError, ProviderRequestError, TruncatedResponseError
 
 _RAISE = object()  # Sentinel: propagate exceptions when the caller supplies no default.
@@ -98,8 +98,13 @@ class Agent:
         operation: str,
         max_tokens: int | None = None,
         thinking_boost: int = 0,
+        require_complete_payload: bool = False,
     ) -> tuple[Any, str]:
-        """Run ``complete`` on ``messages`` and return ``(parsed_json, raw_assistant_text)``."""
+        """Run ``complete`` on ``messages`` and return ``(parsed_json, raw_assistant_text)``.
+
+        With ``require_complete_payload``, a reply that parses only after structural repair raises
+        ``UnsafeJsonRepairError``: the repair may have folded stray text into payload values.
+        """
         if thinking_boost > 0:
             text = self.client.complete(
                 messages,
@@ -115,7 +120,10 @@ class Agent:
                 json_mode=True,
                 max_tokens=max_tokens,
             )
-        return parse_json_loose(text), text
+        parsed = parse_json_result(text)
+        if require_complete_payload and not parsed.safe_for_complete_payload:
+            raise UnsafeJsonRepairError(f"JSON needed structural repair: {text[:200]!r}")
+        return parsed.value, text
 
     def _ask_json(
         self,
