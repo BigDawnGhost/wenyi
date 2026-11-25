@@ -124,6 +124,7 @@ def _rewrite_toc(
     *,
     is_ncx: bool,
     toc_path: str = "",
+    book_title: str = "",
 ) -> bytes:
     """Replace visible NCX/NAV titles while preserving src/href unchanged.
     Locate nodes by toc_path and node_index so fragments in one XHTML can have distinct
@@ -134,6 +135,12 @@ def _rewrite_toc(
         exact_entries = _indexed_toc_entries(entries, toc_path)
         if is_ncx:
             soup = BeautifulSoup(data, "xml")
+            if book_title.strip():
+                doc_title = soup.find("docTitle")
+                doc_title_text = doc_title.find("text") if isinstance(doc_title, Tag) else None
+                if isinstance(doc_title_text, Tag):
+                    doc_title_text.clear()
+                    doc_title_text.append(book_title.strip())
             for node_index, nav_point in enumerate(_ncx_nav_points(soup)):
                 nav_label = _direct_child(nav_point, "navLabel")
                 label = nav_label.find("text") if nav_label is not None else None

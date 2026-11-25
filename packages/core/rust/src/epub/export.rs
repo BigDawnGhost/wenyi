@@ -1204,6 +1204,20 @@ fn rewrite_xml(
             about_edits(&text, &doc, href, &mut edits);
         }
     } else {
+        if let Some(title) = options
+            .presentation
+            .as_ref()
+            .map(|p| strip(&p.title))
+            .filter(|t| !t.is_empty())
+        {
+            if let Some(doc_title) = doc
+                .descendants()
+                .find(|n| n.has_tag_name("docTitle"))
+                .and_then(|n| n.descendants().find(|n| n.has_tag_name("text")))
+            {
+                edits.push(xml_contents(&text, doc_title, title));
+            }
+        }
         let entries: HashMap<_, _> = options
             .toc_entries
             .iter()

@@ -1947,14 +1947,19 @@ class TestTitleTranslation(unittest.TestCase):
             }
         ]
         ncx = (
-            b'<?xml version="1.0"?><ncx><navMap><navPoint>'
+            b'<?xml version="1.0"?><ncx><docTitle><text>Old Book</text></docTitle>'
+            b"<navMap><navPoint>"
             b"<navLabel><text>old</text></navLabel>"
             b'<content src="text/ch1.xhtml#x"/></navPoint></navMap></ncx>'
         )
-        out2 = _rewrite_toc(ncx, ncx_entries, is_ncx=True, toc_path=ncx_path)
+        out2 = _rewrite_toc(
+            ncx, ncx_entries, is_ncx=True, toc_path=ncx_path, book_title="Translated Book"
+        )
         dec = out2.decode("utf-8")
         self.assertIn("第一章译名", dec)
         self.assertNotIn(">old<", dec)
+        self.assertIn("<docTitle><text>Translated Book</text></docTitle>", dec)
+        self.assertNotIn("Old Book", dec)
 
 
 class TestEpubTocMisdetectRegression(unittest.TestCase):
@@ -2066,6 +2071,77 @@ class TestEpubTocMisdetectRegression(unittest.TestCase):
         self.assertNotIn("↩", heading.get_text())
         self.assertNotIn("目录", heading.get_text())
         self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
+
+    def test_epub_template_export_rewrites_ncx_doctitle(self):
+        """Template EPUB export updates NCX <docTitle><text> alongside OPF dc:title."""
+        from wenyi_core.assemble.writer import assemble
+        from wenyi_core.ingest.epub_reader import read_epub
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src_epub = os.path.join(tmp, "book.epub")
+            out_epub = os.path.join(tmp, "book.en.epub")
+            with zipfile.ZipFile(src_epub, "w") as zf:
+                zf.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
+                zf.writestr(
+                    "META-INF/container.xml",
+                    '<?xml version="1.0"?><container version="1.0" '
+                    'xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                    '<rootfiles><rootfile full-path="OEBPS/content.opf" '
+                    'media-type="application/oebps-package+xml"/></rootfiles></container>',
+                )
+                zf.writestr(
+                    "OEBPS/content.opf",
+                    '<?xml version="1.0" encoding="utf-8"?>'
+                    '<package xmlns="http://www.idpf.org/2007/opf" version="2.0">'
+                    '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                    "<dc:title>特拉福买家俱乐部</dc:title><dc:language>zh</dc:language></metadata>"
+                    "<manifest>"
+                    '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
+                    '<item id="c1" href="ch1.xhtml" media-type="application/xhtml+xml"/>'
+                    "</manifest>"
+                    '<spine toc="ncx"><itemref idref="c1"/></spine></package>',
+                )
+                zf.writestr(
+                    "OEBPS/toc.ncx",
+                    '<?xml version="1.0" encoding="utf-8"?>'
+                    '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">'
+                    "<docTitle><text>特拉福买家俱乐部</text></docTitle>"
+                    '<navMap><navPoint id="n1" playOrder="1">'
+                    "<navLabel><text>第一章</text></navLabel>"
+                    '<content src="ch1.xhtml"/></navPoint></navMap></ncx>',
+                )
+                zf.writestr(
+                    "OEBPS/ch1.xhtml",
+                    '<?xml version="1.0" encoding="utf-8"?>'
+                    '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>第一章</title></head>'
+                    "<body><h1>第一章</h1><p>正文。</p></body></html>",
+                )
+
+            doc = read_epub(src_epub, source_lang="zh", target_lang="en")
+            store = FileStorage(os.path.join(tmp, "state"))
+            store.init_from_document(doc)
+            manifest = store.load_manifest()
+            manifest["title_translated"] = "Trafford & Sons Club"
+            manifest["chapters"][0]["title_translated"] = "Chapter 1"
+            for entry in manifest.get("meta", {}).get("toc_entries", []):
+                entry["title_translated"] = "Chapter 1"
+            store.save_manifest(manifest)
+            ch = store.load_chapter(0)
+            for seg in ch.segments:
+                seg.target = "Chapter 1" if seg.kind == "heading" else "Body text."
+            store.save_chapter(ch)
+
+            assemble(store, src_epub, out_epub, out_format="epub")
+
+            with zipfile.ZipFile(out_epub, "r") as zf:
+                opf = BeautifulSoup(zf.read("OEBPS/content.opf"), "xml")
+                ncx = BeautifulSoup(zf.read("OEBPS/toc.ncx"), "xml")
+                self.assertEqual(opf.find("dc:title").get_text(), "Trafford & Sons Club")
+                doc_title = ncx.find("docTitle")
+                self.assertIsNotNone(doc_title)
+                assert doc_title is not None
+                self.assertEqual(doc_title.find("text").get_text(), "Trafford & Sons Club")
+                self.assertEqual(ncx.find("navLabel").find("text").get_text(), "Chapter 1")
 
 
 if __name__ == "__main__":
