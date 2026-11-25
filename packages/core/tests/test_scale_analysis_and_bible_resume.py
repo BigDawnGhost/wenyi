@@ -126,7 +126,9 @@ def test_cross_chapter_spans_include_canonical_for_resume_snapshots():
     assert qm.cross_chapter_spans(include_canonical=True) == before
     # Observed draft renderings stay authoritative over later pre-seeded quotes.
     qm.seed_canonical(before[0], "Wrong pre-seeded rendering.")
-    assert qm.exact_match(quote) == f"“{rendering}”"
+    refs = dict(qm.references_for_batch([f"三藏再念道：「{quote}」"]))
+    assert "Wrong pre-seeded rendering." not in refs.values()
+    assert f"“{rendering}”" in refs.values()
 
 
 def test_bible_resume_reuses_cache_after_repeated_quote_chapter_interrupt(tmp_path, monkeypatch):

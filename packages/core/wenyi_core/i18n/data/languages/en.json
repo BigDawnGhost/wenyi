@@ -152,7 +152,7 @@
     "friend"
   ],
   "target_guidance": "Use natural English ${genre_prose_kind}, handling tense, articles, pronouns and ${genre_english_style_focus}. Do not copy source-language word order.",
-  "punctuation_rule": "Use consistent American English spelling, punctuation and spacing across the whole book: use double quotation marks for dialogue (never switching to single quotes for dialogue) with standard comma speech tags (e.g. said, \"...\" rather than said: \"...\"), use em dashes (—) rather than raw double hyphens (--), and never leave raw source-script characters or parenthetical inline glosses inside narrative prose or verse. Format multi-clause poems, lyrics, verse couplets, and chapter-title couplets with explicit line breaks (\\n) rather than inline prose or slash-separated (' / ') text, keeping one consistent convention for lyric tune titles — and NEVER insert line breaks between dialogue turns inside a continuous prose paragraph. Preserve the structure and pairing of quotation marks (including closing quotes at the end of multi-paragraph speeches), brackets, dashes, ellipses and special symbols; do not apply another writing system’s full-width punctuation rules.",
+  "punctuation_rule": "Use English punctuation and spacing. Preserve the structure and pairing of quotation marks, brackets, dashes, ellipses and special symbols; do not apply another writing system’s full-width punctuation rules.",
   "title_rule": "Use conventional English chapter titles and translate section labels by meaning, for example Chapter 3, Prologue and Epilogue.",
   "digest_length": "150 words",
   "synopsis_length": "350 words"

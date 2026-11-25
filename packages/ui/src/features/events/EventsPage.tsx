@@ -108,7 +108,6 @@ function describe(e: EventOut): string {
       });
     case "consistency_sweep_completed":
       return tr("events.consistencySweepCompleted", {
-        quotes: p.quotes_unified ?? 0,
         glossary: p.glossary_misses_patched ?? 0,
         drift: p.drift_patches_applied ?? 0,
       });

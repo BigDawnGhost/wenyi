@@ -73,9 +73,9 @@ pipeline:
   chapter_concurrency: 1
   # Standard-mode polish workers; above 1, polishing runs in the background while translation continues.
   polish_concurrency: 1
-  # Deterministic post-translation typography hygiene and minority-name normalization (zero model calls).
+  # Zero-cost post-translation repair of leaked newline escapes; never rewrites punctuation or names.
   deterministic_hygiene: true
-  # Fast post-translation cross-chapter consistency sweep (unifies repeated quotes and missed glossary terms).
+  # Fast post-translation cross-chapter sweep: patches missed glossary terms and confirmed title drift.
   consistency_sweep: false
   # Experimental: replace unambiguous high-stability proper nouns with opaque ⟦N#⟧ markers during drafting.
   entity_markers: false
@@ -197,9 +197,9 @@ class PipelineConfig(BaseModel):
     # Above 1, standard-mode polish jobs run in a bounded background pool while translation
     # continues; 1 polishes each batch inline. Ignored by three_draft_synthesis.
     polish_concurrency: int = Field(default=1, ge=1)
-    # Apply deterministic post-translation typography hygiene and minority-name normalization.
+    # Repair leaked newline escapes (no model calls); punctuation and names are never rewritten.
     deterministic_hygiene: bool = True
-    # Fast post-translation cross-chapter consistency sweep (quotes + missed glossary entities).
+    # Fast post-translation cross-chapter sweep (missed glossary terms + confirmed title drift).
     consistency_sweep: bool = False
     # Experimental: transport stable proper nouns as opaque ⟦N#⟧ markers during drafting.
     entity_markers: bool = False

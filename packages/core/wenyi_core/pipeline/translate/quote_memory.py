@@ -81,7 +81,6 @@ class QuoteMemory:
         # Prompt references (may include whole-paragraph, paired inner quotes, or parent-quote refs).
         self._canonical: dict[str, tuple[tuple[int, int], str, str]] = {}
         # Strict whole-paragraph exact matches only (safe for deterministic replacement).
-        self._exact_canonical: dict[str, tuple[tuple[int, int], str, str]] = {}
 
     @classmethod
     def from_chapters(cls, chapters: Sequence[tuple[int, Sequence[str]]]) -> QuoteMemory:
@@ -118,7 +117,6 @@ class QuoteMemory:
             cross_chapter_examples=self._cross_chapter_examples,
         )
         copy._canonical = dict(self._canonical)
-        copy._exact_canonical = dict(self._exact_canonical)
         return copy
 
     @property
@@ -182,20 +180,12 @@ class QuoteMemory:
         if not cleaned_target or not stripped_source or not self._repeated_keys:
             return
 
-        # 1. Whole-paragraph match (unambiguous for both prompt references and exact_match).
+        # 1. Whole-paragraph match.
         if len(stripped_source) <= 240:
             whole_key = _normalize_span(stripped_source)
             if whole_key in self._repeated_keys:
                 self._record_entry(
                     self._canonical,
-                    whole_key,
-                    position,
-                    stripped_source,
-                    cleaned_target,
-                    prefer_update=prefer_update,
-                )
-                self._record_entry(
-                    self._exact_canonical,
                     whole_key,
                     position,
                     stripped_source,
@@ -223,7 +213,7 @@ class QuoteMemory:
                 )
             # Sub-sentences inside a paired quote (e.g. second stanza of a lyric repeated later):
             # align sentence-by-sentence when counts match, otherwise keep as prompt-only reference
-            # under the parent quote wording without touching _exact_canonical.
+            # under the parent quote wording.
             src_parts = [p.strip() for p in _SENTENCE_SPLIT_RE.split(src_q) if p.strip()]
             if len(src_parts) <= 1:
                 continue
@@ -242,7 +232,7 @@ class QuoteMemory:
                         prefer_update=prefer_update,
                     )
                 else:
-                    # Still record parent quote as read-only prompt reference (never _exact_canonical).
+                    # Still record the parent quote as a read-only prompt reference.
                     self._record_entry(
                         self._canonical,
                         p_key,
@@ -251,20 +241,6 @@ class QuoteMemory:
                         tgt_q,
                         prefer_update=prefer_update,
                     )
-
-    def exact_match(self, source: str) -> str | None:
-        """Return a canonical full-paragraph target if ``source`` is an exact repeat of one."""
-        stripped = source.strip()
-        if not stripped or len(stripped) > 240 or not self._repeated_keys:
-            return None
-        key = _normalize_span(stripped)
-        entry = self._exact_canonical.get(key)
-        if entry is None:
-            return None
-        _, canonical_src, canonical_tgt = entry
-        if _normalize_span(canonical_src) == key:
-            return canonical_tgt
-        return None
 
     def references_for_batch(self, sources: Sequence[str]) -> list[tuple[str, str]]:
         """Return ``(source_span, established_target)`` pairs relevant to a batch."""

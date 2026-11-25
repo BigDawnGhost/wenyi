@@ -254,8 +254,6 @@ _CJK_STOP_CHARS = frozenset(
 _CJK_EDGE_PARTICLES = frozenset(
     "的了呢吗嗎吧啊呀嘛着著过過在是有为為与與和及或而但就都也却卻便只才将將把被给給从從向往对對于於之其此那这這哪谁誰怎何不莫无無非乃即若虽雖因故则則且又再还還很太更最极極甚颇頗说說道笑问問叫听聽看知想觉覺见見来來去上下来到"
 )
-# Male-presenting Chinese titles used to detect disguised-character gender spoilers.
-_ZH_MALE_PRESENTING_TITLES = ("公子", "少爷", "少爺", "先生", "兄弟", "老弟", "郎君")
 
 
 @dataclass(frozen=True)
@@ -711,63 +709,6 @@ def _cluster_candidate_rows(
     return rows
 
 
-def _apply_spoiler_safe_gender_guard(
-    terms: list[GlossaryTerm],
-    source_corpus: str,
-    *,
-    source_lang: str,
-) -> list[GlossaryTerm]:
-    """Clear frozen gender on disguised/ambiguous Chinese characters so chapter 1 never spoils reveals."""
-    if not source_lang.lower().startswith("zh") or not source_corpus:
-        return terms
-    out: list[GlossaryTerm] = []
-    for term in terms:
-        if term.type != "person" or term.gender not in {"male", "female"}:
-            out.append(term)
-            continue
-        male_only_hits = 0
-        female_only_hits = 0
-        for m in re.finditer(re.escape(term.source), source_corpus):
-            raw_window = source_corpus[m.end() : min(len(source_corpus), m.end() + 35)]
-            # Stop at sentence boundaries so pronouns in the next sentence don't bleed in, and
-            # require exclusive pronoun evidence per mention so mixed-gender dialogue about two
-            # people ("张明看着李芳，他说她应该回家。") is not mistaken for a disguised character.
-            clause = re.split(r"[。！？\n]", raw_window, maxsplit=1)[0]
-            has_male = "他" in clause
-            has_female = "她" in clause
-            if has_male and not has_female:
-                male_only_hits += 1
-            elif has_female and not has_male:
-                female_only_hits += 1
-        title_clash = term.gender == "female" and any(
-            t in term.source for t in _ZH_MALE_PRESENTING_TITLES
-        )
-        # If separate mentions use exclusively 他 vs exclusively 她 for the same character (or pair
-        # a male-presenting title like 公子 with female gender), keep gender unknown so scenes
-        # follow local POV pronouns.
-        if (male_only_hits >= 1 and female_only_hits >= 1) or title_clash:
-            note = term.note
-            spoiler_note = "Follow scene-local POV pronouns; do not spoil gender."
-            if spoiler_note.lower() not in note.lower():
-                note = f"{note}; {spoiler_note}".strip("; ").strip()
-            out.append(
-                GlossaryTerm(
-                    source=term.source,
-                    target=term.target,
-                    type=term.type,
-                    gender="",
-                    aliases=list(term.aliases),
-                    first_chapter=term.first_chapter,
-                    note=note,
-                    reading=term.reading,
-                    status=term.status,
-                )
-            )
-        else:
-            out.append(term)
-    return out
-
-
 class BookBibleAgent(Agent):
     """Dual-context entropy probe + chunked global adjudicator for pre-translation bible seeding."""
 
@@ -912,14 +853,9 @@ class BookBibleAgent(Agent):
             "Explicitly lock ONE canonical rendering and capitalization for every item listed under "
             "[Divergent recurring titles/offices/motifs] AND for any recurring title/rank/office you exclude "
             "from `terms` (keeping them in `conventions`, NOT in `terms`). "
-            "Prioritize natural, idiomatic phrasing in the target language — NEVER prescribe "
-            "stiff translationese calques (e.g. prefer natural 'I' over archaic literalized humble "
-            "pronouns, concise polity/place names over repetitive 'the State of X', one uniform era-date "
-            "format across all chapters, and natural direct-address titles over awkward "
-            "third-person address — e.g. in historical/classical works, specify 'Master [Surname]' / "
-            "'Master' for titled or third-person 先生, never modern 'Mr.' or ungrammatical 'the sir'). "
-            "Never collapse distinct ranks (e.g. keep a sovereign King/Emperor "
-            "distinct from a subordinate Prince).\n"
+            "Prioritize natural, idiomatic phrasing in the target language that suits this "
+            "book's genre and era; NEVER prescribe stiff word-for-word calques of source forms of "
+            "address, self-reference or titles. Never collapse distinct ranks into one rendering.\n"
             if include_conventions
             else ""
         )
@@ -1032,7 +968,6 @@ class BookBibleAgent(Agent):
         book_synopsis: str,
         style: str,
         existing_terms: Sequence[GlossaryTerm],
-        source_corpus: str = "",
         chunk_size: int = 55,
     ) -> list[GlossaryTerm]:
         """Settle all kept candidates, chunking large sets safely so output never truncates."""
@@ -1041,7 +976,6 @@ class BookBibleAgent(Agent):
             book_synopsis=book_synopsis,
             style=style,
             existing_terms=existing_terms,
-            source_corpus=source_corpus,
             chunk_size=chunk_size,
         )
         return terms
@@ -1053,7 +987,6 @@ class BookBibleAgent(Agent):
         book_synopsis: str,
         style: str,
         existing_terms: Sequence[GlossaryTerm],
-        source_corpus: str = "",
         chunk_size: int = 55,
         divergent_titles: Sequence[tuple[BibleCandidate, str, str]] = (),
     ) -> tuple[list[GlossaryTerm], tuple[str, ...]]:
@@ -1088,10 +1021,7 @@ class BookBibleAgent(Agent):
             anchors.extend(chunk_terms)
             if chunk_convs:
                 conventions.extend(chunk_convs)
-        safe_terms = _apply_spoiler_safe_gender_guard(
-            all_terms, source_corpus, source_lang=self.src
-        )
-        return safe_terms, tuple(conventions[:8])
+        return all_terms, tuple(conventions[:8])
 
     def compile_voice_exemplars(
         self,
@@ -1292,7 +1222,6 @@ class BookBibleAgent(Agent):
             book_synopsis=book_synopsis,
             style=style,
             existing_terms=existing_terms,
-            source_corpus=source_corpus,
             divergent_titles=divergent_generic[:10],
         )
         kept_term_sources = {normalize_match_text(t.source).strip() for t in terms}

@@ -289,25 +289,6 @@ def test_glossary_notes_alias_matching_not_blocked_by_navigation_title(tmp_path)
     assert service.maintain(0, 0, chapters[0].text_segments) == {"Carl Vance"}
 
 
-def test_normalize_minority_names_ignores_navigation_titles():
-    from wenyi_core.pipeline.translate.post_normalize import normalize_minority_names
-
-    terms = [
-        GlossaryTerm("蓝斯", "Lance", type="person"),
-        # Nav title contains the minority spelling "Lanse" as a substring — must NOT block normalization.
-        _nav("第99章 蓝斯的归来", "Chapter 99: Lanse Returns"),
-    ]
-    pairs = [("蓝斯点头。", "Lanse nodded.")]
-    updated, subs = normalize_minority_names(
-        pairs,
-        terms,
-        variants_by_source={"蓝斯": ("Lanse",)},
-        target_lang="en",
-    )
-    assert updated == ["Lance nodded."]
-    assert len(subs) == 1 and subs[0]["to"] == "Lance"
-
-
 def test_upsert_promotes_navigation_stub_to_entity_type(tmp_path):
     store = FileStorage(str(tmp_path / "state"))
     try:

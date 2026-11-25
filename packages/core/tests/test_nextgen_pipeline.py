@@ -14,6 +14,7 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
 from wenyi_core.agents.book_bible import BookBibleAgent, mine_bible_candidates
 from wenyi_core.agents.sparse_editor import SparseSemanticEditor
 from wenyi_core.config import Config
@@ -296,7 +297,7 @@ def test_parallel_compiled_pipeline_is_order_independent_and_resumable(tmp_path:
                 return json.dumps(
                     {"translations": [f"Pilgrim and Sanzang ({i}) -- ok." for i in range(n)]}
                 )
-            if "bilingual literary editor" in sys_msg:
+            if "senior bilingual editor" in sys_msg:
                 return json.dumps({"patches": []})
             if "chapter title translator" in sys_msg:
                 n = len(re.findall(r"^\[\d+\]", user_msg, re.MULTILINE))
@@ -334,8 +335,8 @@ def test_parallel_compiled_pipeline_is_order_independent_and_resumable(tmp_path:
     assert bible_a == 3 and bible_b == 3
     # Completion order never changes chapter content.
     assert targets_a == targets_b
-    # Deterministic hygiene fixed '--' -> '—'.
-    assert all("—" in t and "--" not in t for segs in targets_a.values() for t in segs)
+    # Deterministic hygiene never rewrites the model's punctuation ('--' is kept as drafted).
+    assert all(t.endswith("-- ok.") for segs in targets_a.values() for t in segs)
     # Chapter 1 opening context received deterministic positional source lookbehind (not translated targets).
     assert "Preceding chapter closing source" in ctx_a["ch1"]
     assert "行者笑著說道" in ctx_a["ch1"]
@@ -421,9 +422,9 @@ def test_benchmark_metrics_script_analyzes_completed_run(tmp_path: Path):
     report = mod.analyze_run(str(tmp_path))
     assert report["segments_translated"] == 2
     assert report["glossary_entries"] >= 1
-    assert report["formatting_lint"]["colon_tags"] == 0
-    assert report["formatting_lint"]["raw_double_dash"] == 0
-    assert report["post_normalized"]["typography_fixes"] >= 1
+    # Hygiene leaves the model's punctuation alone, so the lint still sees it.
+    assert report["formatting_lint"]["colon_tags"] == 2
+    assert report["formatting_lint"]["raw_double_dash"] == 2
 
 
 def test_book_bible_snippets_follow_normalized_offsets_after_readings():
@@ -667,24 +668,24 @@ def test_parallel_resume_repolishes_drafts_whose_polish_failed(tmp_path: Path):
     base = _parallel_handler([])
 
     def drafting(messages, tier, json_mode):
-        if "bilingual literary editor" in messages[0]["content"]:
+        if "senior bilingual editor" in messages[0]["content"]:
             raise RuntimeError("editor down")
         if "literary translator" in messages[0]["content"]:
             n = len(re.findall(r"^\[\d+\]", messages[-1]["content"], re.MULTILINE))
-            # Hygiene rewrites "--", so the published text differs from the raw draft.
-            return json.dumps({"translations": [f"Draft -- {i}." for i in range(n)]})
+            # Hygiene repairs the leaked escape, so the published text differs from the raw draft.
+            return json.dumps({"translations": [f"Draft\\n{i}." for i in range(n)]})
         return base(messages, tier, json_mode)
 
     cfg = _parallel_config(tmp_path, polish=True, polish_mode="sparse")
     store = Orchestrator(cfg, client=FakeClient(handler=drafting)).run(str(book))
     first = store.load_chapter(1).text_segments
     assert all(s.meta.get(POLISH_FAILED) for s in first)
-    assert [s.target for s in first] == ["Draft—0."] * len(first)
+    assert [s.target for s in first] == ["Draft\n0."] * len(first)
 
     edits: list[str] = []
 
     def editing(messages, tier, json_mode):
-        if "bilingual literary editor" in messages[0]["content"]:
+        if "senior bilingual editor" in messages[0]["content"]:
             edits.append(messages[-1]["content"])
             return json.dumps({"patches": [{"index": 0, "reason": "fix", "text": "Polished."}]})
         return base(messages, tier, json_mode)
@@ -1383,7 +1384,7 @@ def test_compiled_book_bible_cache_hits_on_resume_with_translated_repeated_quote
                     ]
                 }
             )
-        if "bilingual literary editor" in sys_msg:
+        if "senior bilingual editor" in sys_msg:
             return json.dumps({"patches": []})
         if "chapter title translator" in sys_msg:
             nums = re.findall(r"^\[(\d+)\]", user_msg, re.MULTILINE)
@@ -1727,13 +1728,11 @@ def test_chapter_hygiene_preserves_offset_bound_annotation_and_docx_style_segmen
     ann_head = Segment(
         index=0,
         source="行者道：「第一段。",
-        target='Walker paused -- "First part.',
+        target="Walker paused.\\nFirst part.",
         meta={
             "annotations": {
                 "items": [{"id": "a1", "mode": "point", "source_start": 0, "source_end": 2}],
-                "target_digest": target_digest(
-                    'Walker paused -- "First part.Continuation -- here.'
-                ),
+                "target_digest": target_digest("Walker paused.\\nFirst part.Continuation.\\nhere."),
                 "placements": [
                     {"id": "a1", "status": "aligned", "target_start": 0, "target_end": 6}
                 ],
@@ -1743,17 +1742,17 @@ def test_chapter_hygiene_preserves_offset_bound_annotation_and_docx_style_segmen
     ann_cont = Segment(
         index=1,
         source="續段。",
-        target="Continuation -- here.",
+        target="Continuation.\\nhere.",
         cont=True,
     )
     docx_seg = Segment(
         index=2,
         source="三藏笑道。",
-        target='Sanzang said: "Wait -- now."',
+        target="Sanzang waited.\\nNow.",
         meta={
             "docx_styles": {
                 "items": [{"id": "s1", "mode": "range", "source_start": 0, "source_end": 2}],
-                "target_digest": target_digest('Sanzang said: "Wait -- now."'),
+                "target_digest": target_digest("Sanzang waited.\\nNow."),
                 "placements": [
                     {"id": "s1", "status": "aligned", "target_start": 0, "target_end": 7}
                 ],
@@ -1763,24 +1762,18 @@ def test_chapter_hygiene_preserves_offset_bound_annotation_and_docx_style_segmen
     plain_seg = Segment(
         index=3,
         source="行者又道。",
-        target='Walker said: "Wait -- now."',
+        target="Walker waited.\\nNow.",
     )
     chapter = Chapter(index=0, title="Ch1", segments=[ann_head, ann_cont, docx_seg, plain_seg])
-    terms = [GlossaryTerm(source="行者", target="Pilgrim", type="person")]
 
-    service._apply_chapter_hygiene(
-        store,
-        chapter,
-        terms=terms,
-        variants={"行者": ["Walker"]},
-    )
+    service._apply_chapter_hygiene(store, chapter)
 
     # Offset-bound annotation (head + cont) and docx_styles segments stay byte-identical.
-    assert ann_head.target == 'Walker paused -- "First part.'
-    assert ann_cont.target == "Continuation -- here."
-    assert docx_seg.target == 'Sanzang said: "Wait -- now."'
-    # Plain segment still receives both typography hygiene and minority-name normalization.
-    assert plain_seg.target == 'Pilgrim said, "Wait—now."'
+    assert ann_head.target == "Walker paused.\\nFirst part."
+    assert ann_cont.target == "Continuation.\\nhere."
+    assert docx_seg.target == "Sanzang waited.\\nNow."
+    # The plain segment gets the leaked-escape repair.
+    assert plain_seg.target == "Walker waited.\nNow."
 
 
 def test_bible_candidates_tiebreak_deterministically_at_max_candidates():
@@ -1878,3 +1871,136 @@ def test_entity_markers_plain_retry_rejects_residual_marker_brackets():
     )
     with pytest.raises(ValueError, match="residual marker"):
         executor.translate(plan)
+
+
+def test_book_bible_keeps_adjudicated_gender_when_scenes_mix_pronouns():
+    """他 and 她 after a name usually refer to other people; they are no disguise signal."""
+
+    def handler(messages, tier, json_mode):
+        sys_msg = messages[0]["content"]
+        if "terminology prober" in sys_msg:
+            return json.dumps({"renderings": {"黛玉": "Daiyu"}})
+        if "Book Bible" in sys_msg:
+            return json.dumps(
+                {
+                    "terms": [
+                        {"source": "黛玉", "target": "Daiyu", "type": "person", "gender": "female"}
+                    ]
+                }
+            )
+        return "{}"
+
+    corpus = "黛玉见了他，心中一动。黛玉低头想她母亲的话。黛玉笑了。黛玉起身。黛玉回房。"
+    agent = _bible_agent(handler)
+    result = agent.compile_bible(["黛玉见了宝玉。"], corpus)
+    by_source = {term.source: term for term in result.terms}
+    assert by_source["黛玉"].gender == "female"
+    assert "do not spoil" not in by_source["黛玉"].note.lower()
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        # Russian case ending: a probe can observe "Москву" next to canonical "Москва".
+        ("He went to Moscow.", "Он отправился в Москву."),
+        # English plural of a family name.
+        ("史密斯一家到了。", "The Smiths arrived."),
+        # A variant that is part of another name.
+        ("老高的女儿高翠兰。", "Old Gao's daughter, Gao Cuilan."),
+        # An open glossary conflict may be a different place.
+        ("白石在白石镇外。", "White Stone lies beyond White Rock Town."),
+    ],
+)
+def test_chapter_hygiene_never_rewrites_names(tmp_path: Path, source: str, target: str):
+    """Name consistency belongs to the glossary prompt and Review, not a regex pass."""
+    from wenyi_core.models.document import Chapter, Segment
+    from wenyi_core.pipeline.annotate.annotations import AnnotationService
+    from wenyi_core.pipeline.run.runtime import PipelineRuntime
+    from wenyi_core.pipeline.translate.translation import TranslationService
+    from wenyi_core.storage.file import FileStorage
+
+    cfg = _parallel_config(tmp_path, chapter_concurrency=1)
+    store = FileStorage(str(tmp_path / "run"), create=True)
+    runtime = PipelineRuntime(cfg, client=FakeClient(handler=_parallel_handler([])))
+    service = TranslationService(runtime, AnnotationService(runtime))
+    service._bible_variants = {
+        "Moscow": ("Москву",),
+        "史密斯": ("Smiths",),
+        "老高": ("Gao",),
+    }
+    store.open_conflicts = lambda: [{"source": "白石", "proposed_target": "White Rock"}]
+    for term in (
+        GlossaryTerm(source="Moscow", target="Москва", type="place"),
+        GlossaryTerm(source="史密斯", target="Smith", type="person"),
+        GlossaryTerm(source="老高", target="Old Gao", type="person"),
+        GlossaryTerm(source="白石", target="White Stone", type="place"),
+    ):
+        store.upsert_term(term)
+    seg = Segment(index=0, source=source, target=target)
+    chapter = Chapter(index=0, title="Ch1", segments=[seg])
+
+    service._apply_chapter_hygiene(store, chapter)
+
+    assert seg.target == target
+
+
+def test_serial_chapters_pass_book_bible_variants_to_batches(tmp_path: Path):
+    """Probe-observed name variants are sparse-editor evidence on the serial path too."""
+    book = tmp_path / "novel.txt"
+    book.write_text(_PARALLEL_BOOK, encoding="utf-8")
+    orch = Orchestrator(
+        _parallel_config(tmp_path, chapter_concurrency=1),
+        client=FakeClient(handler=_parallel_handler([])),
+    )
+    original = orch._translation._bible_seed.ensure_seeded
+
+    def seeded(store, **kwargs):
+        original(store, **kwargs)
+        return {"行者": ("Walker",)}
+
+    orch._translation._bible_seed.ensure_seeded = seeded
+    plans: list = []
+    real_execute = orch._translation._batches.execute
+
+    def capture(plan, **kwargs):
+        plans.append(plan)
+        return real_execute(plan, **kwargs)
+
+    orch._translation._batches.execute = capture
+    orch.run(str(book))
+    assert plans
+    assert all(plan.variants_by_source == {"行者": ("Walker",)} for plan in plans)
+
+
+def test_parallel_resume_repolish_passes_book_bible_variants(tmp_path: Path):
+    book = tmp_path / "novel.txt"
+    book.write_text(_PARALLEL_BOOK, encoding="utf-8")
+    base = _parallel_handler([])
+
+    def drafting(messages, tier, json_mode):
+        if "senior bilingual editor" in messages[0]["content"]:
+            raise RuntimeError("editor down")
+        return base(messages, tier, json_mode)
+
+    cfg = _parallel_config(tmp_path, polish=True, polish_mode="sparse")
+    Orchestrator(cfg, client=FakeClient(handler=drafting)).run(str(book))
+
+    orch = Orchestrator(cfg, client=FakeClient(handler=base))
+    original = orch._translation._bible_seed.ensure_seeded
+
+    def seeded(store, **kwargs):
+        original(store, **kwargs)
+        return {"行者": ("Walker",)}
+
+    orch._translation._bible_seed.ensure_seeded = seeded
+    jobs: list = []
+    real_schedule = orch._translation._schedule_polish
+
+    def capture(store, job, *args, **kwargs):
+        jobs.append(job)
+        return real_schedule(store, job, *args, **kwargs)
+
+    orch._translation._schedule_polish = capture
+    orch.run(str(book))
+    assert jobs
+    assert all(job.variants_by_source == {"行者": ("Walker",)} for job in jobs)

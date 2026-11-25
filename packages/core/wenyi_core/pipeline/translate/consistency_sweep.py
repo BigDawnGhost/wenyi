@@ -1,12 +1,14 @@
 """Fast post-parallel book-wide consistency sweep (10-20s vs. 33m legacy Review).
 
 Closes the residual cross-chapter consistency gap of parallel chapter translation with:
-1. Deterministic whole-paragraph repeated-quote unification (earliest polished chapter wins).
-2. Book-wide glossary-miss detection across chapters (finds minority renderings missed by
-   deterministic name normalization).
-3. Mid-frequency non-glossary term drift detection (statistical co-occurrence across
+1. Book-wide glossary-miss detection across chapters, repaired via surgical sparse patches.
+2. Mid-frequency non-glossary term drift detection (statistical co-occurrence across
    chapters to spot split renderings like 'retainer'/'adviser' or 'sovereign'/'king'),
    adjudicated in one tiny call and repaired via surgical sparse patches.
+
+Repeated source paragraphs are never overwritten with an earlier chapter's translation:
+the same words can need a different rendering in a different scene (speaker, gender,
+tense). Book-wide quote memory reaches the drafting model as a prompt reference instead.
 
 Never mutates segments with offset-bound annotation/protected-object/DOCX-style placements.
 """
@@ -31,7 +33,6 @@ from ...i18n.languages import (
 from ...models.document import Chapter, Segment
 from ...models.glossary import TYPE_NAVIGATION, GlossaryTerm
 from ...storage.protocol import Storage
-from .quote_memory import QuoteMemory
 
 _LOGGER = logging.getLogger(__name__)
 _EN_CONTENT_WORD_RE = re.compile(r"\b[A-Za-z][A-Za-z'-]{3,}\b")
@@ -458,7 +459,6 @@ class DriftCluster:
 
 @dataclass(frozen=True)
 class ConsistencySweepResult:
-    quotes_unified: int
     glossary_misses_patched: int
     drift_clusters_checked: int
     drift_patches_applied: int
@@ -818,33 +818,13 @@ class ConsistencySweepService:
     ) -> ConsistencySweepResult:
         """Scan completed chapters for cross-chapter quote/glossary drift and patch surgically."""
         if len(chapter_indices) < 2:
-            return ConsistencySweepResult(0, 0, 0, 0)
+            return ConsistencySweepResult(0, 0, 0)
 
         chapters = [store.load_chapter(ci) for ci in chapter_indices]
         protected_by_ch = {ch.index: _protected_segment_ids(ch) for ch in chapters}
         modified_chapters: set[int] = set()
 
-        # 1. Deterministic whole-paragraph repeated-quote unification (earliest chapter wins).
-        qm = QuoteMemory.from_chapters(
-            [(ch.index, [s.source for s in ch.text_segments]) for ch in chapters]
-        )
-        quotes_unified = 0
-        for ch in chapters:
-            for idx, seg in enumerate(ch.text_segments):
-                if seg.target:
-                    qm.observe((ch.index, idx), seg.source, seg.target)
-        for ch in chapters:
-            prot = protected_by_ch[ch.index]
-            for seg in ch.text_segments:
-                if id(seg) in prot or not seg.target:
-                    continue
-                canonical_quote = qm.exact_match(seg.source)
-                if canonical_quote and canonical_quote != seg.target:
-                    seg.target = canonical_quote
-                    modified_chapters.add(ch.index)
-                    quotes_unified += 1
-
-        # 2. Book-wide glossary miss sweep (surgical sparse patches for missed canonical terms).
+        # 1. Book-wide glossary miss sweep (surgical sparse patches for missed canonical terms).
         generic_words = glossary_generic_target_words(self._tgt)
         entity_terms = [
             t
@@ -915,7 +895,7 @@ class ConsistencySweepService:
                             modified_chapters.add(ch.index)
                             glossary_patched += 1
 
-        # 3. Detect mid-frequency title/term drift and unify confirmed splits surgically.
+        # 2. Detect mid-frequency title/term drift and unify confirmed splits surgically.
         drift_clusters = detect_mid_frequency_drift(
             chapters,
             source_lang=self._src,
@@ -1010,10 +990,9 @@ class ConsistencySweepService:
             if ch.index in modified_chapters:
                 store.save_chapter(ch)
 
-        if quotes_unified or glossary_patched or drift_clusters or drift_patched:
+        if glossary_patched or drift_clusters or drift_patched:
             store.log_event(
                 "consistency_sweep_completed",
-                quotes_unified=quotes_unified,
                 glossary_misses_patched=glossary_patched,
                 drift_patches_applied=drift_patched,
                 drift_decisions=drift_decisions,
@@ -1027,7 +1006,6 @@ class ConsistencySweepService:
                 ],
             )
         return ConsistencySweepResult(
-            quotes_unified=quotes_unified,
             glossary_misses_patched=glossary_patched,
             drift_clusters_checked=len(drift_clusters),
             drift_patches_applied=drift_patched,

@@ -370,8 +370,7 @@ class TestSegmentLevelResume(unittest.TestCase):
             # Extract once for the missing checkpoint and once after the final translation; chapter fallback is separate.
             self.assertEqual(extract_batch_calls["n"], 2)
             # Read at chapter start and refresh once before real translation; checkpointed skips do not refresh.
-            # The third read fixes the terms chapter hygiene applies at publication.
-            self.assertEqual(snapshots.call_count, 3)
+            self.assertEqual(snapshots.call_count, 2)
             resumed = store.load_chapter(0).text_segments
             self.assertTrue((resumed[-1].target or "").startswith("R2"))
             self.assertTrue(

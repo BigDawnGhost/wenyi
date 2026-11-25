@@ -149,7 +149,7 @@ const en = {
     "Book Bible compiled ({seeded} terms, {quotes} quotes)",
   "events.glossaryBibleReused": "Book Bible reused ({seeded} terms)",
   "events.consistencySweepCompleted":
-    "Consistency sweep completed ({quotes} quotes, {glossary} glossary, {drift} drift fixes)",
+    "Consistency sweep completed ({glossary} glossary, {drift} drift fixes)",
   "events.noEventsYet": "No events yet.",
   "export.exportTaskSubmitted": "Export task submitted",
   "export.saveAs": "Save as",
@@ -536,10 +536,10 @@ const en = {
   "settings.polishing": "Polishing",
   "settings.consistencySweep": "Book-wide consistency sweep",
   "settings.consistencySweepHelp":
-    "After all chapters finish, unify repeated quotes, patch missed glossary terms, and reconcile cross-chapter title or epithet drift.",
+    "After all chapters finish, patch missed glossary terms and reconcile cross-chapter title or epithet drift.",
   "settings.deterministicHygiene": "Deterministic formatting hygiene",
   "settings.deterministicHygieneHelp":
-    "Normalize punctuation, quotation marks, line breaks, and stray markup artifacts deterministically after each chapter.",
+    "Repair leaked \\n escapes after each chapter. Punctuation, line layout and names are left as translated.",
   "settings.glossaryMode": "Glossary mode",
   "settings.glossaryModeHelp":
     "Incremental extracts terms batch by batch. Compiled pre-compiles a book-wide glossary, conventions, and repeated quotes before translation so chapters can run in parallel.",

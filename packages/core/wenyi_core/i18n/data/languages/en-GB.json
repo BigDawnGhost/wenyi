@@ -2,6 +2,5 @@
   "extends": "en",
   "label": "British English",
   "english_name": "British English",
-  "target_guidance": "Use natural British English with consistent British spelling, vocabulary and punctuation. Preserve ${genre_voice_focus}.",
-  "punctuation_rule": "Use consistent British English spelling, punctuation and spacing across the whole book: keep one steady quotation-mark style with standard comma speech tags (e.g. said, '...' or said, \"...\", never said: \"...\"), use proper dashes rather than raw double hyphens (--), and never leave raw source-script characters or parenthetical inline glosses inside narrative prose or verse. Format multi-clause poems, lyrics and verse couplets with explicit line breaks (\\n) rather than inline prose or ' / ', and NEVER insert line breaks between dialogue turns inside a continuous prose paragraph. Preserve the structure and pairing of quotation marks, brackets, dashes, ellipses and special symbols."
+  "target_guidance": "Use natural British English with consistent British spelling, vocabulary and punctuation. Preserve ${genre_voice_focus}."
 }

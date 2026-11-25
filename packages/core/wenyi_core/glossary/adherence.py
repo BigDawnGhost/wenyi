@@ -29,6 +29,38 @@ def _matcher(key: str) -> re.Pattern[str] | str:
     return _source_pattern(key) or key
 
 
+# Inflected targets decline names and terms ("Москва" -> "в Москве", "Алиса" -> "Алисой",
+# "Лунный лес" -> "в Лунном лесу"), so a target word counts as used when it appears with a
+# changed final letter or two and a short ending. The stem always keeps all but the last one
+# or two letters, so "court" never matches "could" and "force" never matches "for". A false
+# hit only keeps a mapping in prompts longer; a false miss would drop a correct one.
+
+
+def _word_pattern(word: str) -> str:
+    if not word[-1:].isalpha():
+        return re.escape(word)
+    if len(word) >= 6:
+        # "church" -> "churches", "дракон" -> "драконом", "медведь" -> "медведями".
+        return re.escape(word[:-2]) + r"\w{1,4}"
+    if len(word) >= 4:
+        # "Алиса" -> "Алисой", "Волга" -> "Волге", "Анна" -> "Анну"; never "king" -> "kingdom".
+        return re.escape(word[:-1]) + r"\w{1,3}"
+    # Very short words keep their full form: "лес" -> "лесом", but "Lu" never "Lushan".
+    return re.escape(word) + rf"\w{{0,{min(2, len(word) - 1)}}}"
+
+
+def _inflection_tolerant_matcher(key: str) -> re.Pattern[str] | str:
+    """Match each target word with a short inflectional ending in spaced scripts.
+
+    Unspaced scripts (CJK) keep the plain substring match, which already ignores endings.
+    """
+    if _source_pattern(key) is None:
+        return key
+    left = r"(?<!\w)" if key[:1].isalnum() else ""
+    right = r"(?!\w)" if key[-1:].isalnum() else ""
+    return re.compile(left + r"\s+".join(_word_pattern(w) for w in key.split()) + right)
+
+
 def _found(matcher: re.Pattern[str] | str, text: str) -> bool:
     return matcher in text if isinstance(matcher, str) else matcher.search(text) is not None
 
@@ -81,7 +113,7 @@ class GlossaryAdherence:
             # Aliases are not counted: a hero called by an epithet (大圣 "the Great Sage") must
             # not make the main name look overridden.
             source = _matcher(source_key) if source_key else None
-            target = _matcher(target_key) if target_key else None
+            target = _inflection_tolerant_matcher(target_key) if target_key else None
             for position, source_text, target_text in self._pairs[start:]:
                 if source is not None and _found(source, source_text):
                     counts.hits[position] = target is not None and _found(target, target_text)

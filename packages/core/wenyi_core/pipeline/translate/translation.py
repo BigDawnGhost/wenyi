@@ -49,11 +49,7 @@ from .context import render_recent_translations
 from .extraction_queue import ExtractionQueue
 from .glossary_notes import GlossaryNotes
 from .polish_queue import PolishOutcome, PolishQueue
-from .post_normalize import (
-    normalize_chapter_cjk_typography,
-    normalize_chapter_latin_typography,
-    normalize_minority_names,
-)
+from .post_normalize import repair_escaped_newlines
 from .precision import PrecisionBatchExecutor, PrecisionError
 from .quote_memory import QuoteMemory
 from .title_translation import TitleTranslationService
@@ -97,10 +93,6 @@ def _draft_pairs(
     ]
 
 
-_LATIN_TARGET_LANGS = frozenset(
-    {"en", "en-US", "en-GB", "fr", "de", "es", "it", "pt", "pt-BR", "pt-PT", "vi"}
-)
-_CJK_HYGIENE_TARGET_LANGS = frozenset({"zh", "zh-Hant"})
 _HUGE_CHAPTER_BATCH_THRESHOLD = 12
 _HUGE_CHAPTER_WAVE_SIZE = 6
 _SOURCE_LOOKBEHIND_PARAS = 3
@@ -196,9 +188,6 @@ class TranslationService:
         # In-memory chapters this run still writes, including those awaiting polish results.
         self._open_chapters: dict[int, Chapter] = {}
         self._awaiting_polish: set[int] = set()
-        # Hygiene terms fixed when a chapter's text and terms are final, used if it publishes
-        # later once its polish lands, so job timing never changes the published text.
-        self._publish_terms: dict[int, tuple[list[GlossaryTerm] | None, dict[str, list[str]]]] = {}
         # Extracted mappings the translator keeps overriding are left out of later prompts.
         self._adherence = GlossaryAdherence()
         self._left_out: frozenset[str] = frozenset()
@@ -420,7 +409,6 @@ class TranslationService:
             self._polish_queue = None
             self._open_chapters.clear()
             self._awaiting_polish.clear()
-            self._publish_terms.clear()
             self._quote_memory = None
             self._runtime.usage.flush(store, scope="translate")
         if progress and total:
@@ -711,6 +699,7 @@ class TranslationService:
                                     for s in b
                                 )
                             ),
+                            self._bible_variants or None,
                         ),
                     )
                 seg_base += len(b)
@@ -762,6 +751,7 @@ class TranslationService:
                 next_source,
                 allow_empty_translations=allow_empty_translations,
                 entity_markers=self._runtime.config.pipeline.entity_markers,
+                variants_by_source=self._bible_variants or None,
             )
             if self._runtime.config.pipeline.translation_mode == "three_draft_synthesis":
 
@@ -926,17 +916,16 @@ class TranslationService:
         # Precision publication reloads the chapter; publish the object this loop last saved.
         self._open_chapters[ci] = chapter
 
-        def publish_when_polished(terms: list[GlossaryTerm] | None) -> None:
+        def publish_when_polished() -> None:
             # The chapter is done only once its terms are stored and its polish is applied.
             if self._polish_queue is not None and ci in self._polish_queue.pending_chapters():
                 self._awaiting_polish.add(ci)
-                self._publish_terms[ci] = (terms, self._hygiene_variants(store))
             else:
-                self._publish_chapter(store, ci, terms=terms)
+                self._publish_chapter(store, ci)
 
         if compiled_glossary:
             # The frozen Book Bible replaces per-chapter fallback extraction.
-            publish_when_polished(term_snapshot)
+            publish_when_polished()
             return done
         # Keep chapter-wide extraction as a fallback for address, speech and fixed expressions needing context.
         # Final review reads the stable glossary after the entire book finishes translating.
@@ -952,8 +941,7 @@ class TranslationService:
             if notes is not None:
                 notes.maintain(ci, 0, chapter_segments, exclude=covered_notes)
             store.log_event("chapter_glossary_extracted", chapter=ci, summary=summary)
-            # Read the glossary once its last extraction for this chapter is stored.
-            publish_when_polished(glossary.all_terms())
+            publish_when_polished()
 
         self._extract(
             glossary,
@@ -969,21 +957,6 @@ class TranslationService:
         )
         return done
 
-    def _hygiene_variants(self, store: Storage) -> dict[str, list[str]]:
-        """Known alternative spellings: Bible probe renderings plus open conflict proposals."""
-        variants_by_source: dict[str, list[str]] = {
-            k: list(v) for k, v in self._bible_variants.items()
-        }
-        try:
-            for conflict in store.open_conflicts():
-                src = conflict.get("source")
-                prop = conflict.get("proposed_target")
-                if isinstance(src, str) and isinstance(prop, str) and prop.strip():
-                    variants_by_source.setdefault(src, []).append(prop.strip())
-        except Exception:  # noqa: BLE001 - optional conflict enrichment
-            pass
-        return variants_by_source
-
     @staticmethod
     def _has_offset_bound_metadata(head: Segment) -> bool:
         """Return True when a logical paragraph stores offset-bound alignment placements."""
@@ -998,15 +971,13 @@ class TranslationService:
             and docx_styles["items"]
         )
 
-    def _apply_chapter_hygiene(
-        self,
-        store: Storage,
-        chapter: Chapter,
-        *,
-        terms: list[GlossaryTerm] | None = None,
-        variants: dict[str, list[str]] | None = None,
-    ) -> None:
-        """Apply zero-cost deterministic typography hygiene and minority-name normalization."""
+    def _apply_chapter_hygiene(self, store: Storage, chapter: Chapter) -> None:
+        """Repair leaked literal ``\\n`` escapes before publication (no model calls).
+
+        Only source-grounded repairs belong here. Quotation marks, dashes, speech tags,
+        layout and names are never rewritten deterministically: what is right differs by
+        language, genre and house style, and the model, glossary prompt and Review own them.
+        """
         if not self._runtime.config.pipeline.deterministic_hygiene:
             return
         # Segments belonging to logical paragraphs with offset-bound annotation, protected-object,
@@ -1019,57 +990,19 @@ class TranslationService:
                 current_head = seg
             if self._has_offset_bound_metadata(current_head):
                 protected_ids.add(id(seg))
-        text_segs = [s for s in chapter.text_segments if s.target]
-        if not text_segs:
-            return
-        typo_fixes = 0
-        target_lang = self._runtime.config.target_lang
-        if target_lang in _LATIN_TARGET_LANGS:
-            ch_pairs = [(seg.source, seg.target or "") for seg in text_segs]
-            cleaned_targets, _ = normalize_chapter_latin_typography(
-                ch_pairs, target_lang=target_lang
-            )
-            for seg, cleaned in zip(text_segs, cleaned_targets):
-                if id(seg) in protected_ids:
-                    continue
-                if cleaned != seg.target:
-                    _set_hygienic_target(seg, cleaned)
-                    typo_fixes += 1
-        elif target_lang in _CJK_HYGIENE_TARGET_LANGS:
-            ch_pairs = [(seg.source, seg.target or "") for seg in text_segs]
-            cleaned_targets, _ = normalize_chapter_cjk_typography(ch_pairs)
-            for seg, cleaned in zip(text_segs, cleaned_targets):
-                if id(seg) in protected_ids:
-                    continue
-                if cleaned != seg.target:
-                    _set_hygienic_target(seg, cleaned)
-                    typo_fixes += 1
-
-        effective_terms = list(terms) if terms is not None else store.all_terms()
-        variants_by_source = variants if variants is not None else self._hygiene_variants(store)
-
-        pairs = [(seg.source, seg.target or "") for seg in text_segs]
-        normalized_targets, raw_name_subs = normalize_minority_names(
-            pairs,
-            effective_terms,
-            variants_by_source=variants_by_source,
-            target_lang=target_lang,
-        )
-        for seg, updated in zip(text_segs, normalized_targets):
-            if id(seg) in protected_ids:
+        fixes = 0
+        for seg in chapter.text_segments:
+            if not seg.target or id(seg) in protected_ids:
                 continue
-            _set_hygienic_target(seg, updated)
-        name_subs = [
-            sub for sub in raw_name_subs if id(text_segs[sub["index"]]) not in protected_ids
-        ]
-
-        if typo_fixes or name_subs:
+            cleaned = repair_escaped_newlines(seg.source, seg.target)
+            if cleaned != seg.target:
+                _set_hygienic_target(seg, cleaned)
+                fixes += 1
+        if fixes:
             store.log_event(
                 "chapter_post_normalized",
                 chapter=chapter.index,
-                typography_fixes=typo_fixes,
-                name_substitutions=len(name_subs),
-                substitutions=name_subs[:50],
+                typography_fixes=fixes,
             )
 
     def _translate_wave_worker(
@@ -1599,10 +1532,11 @@ class TranslationService:
                                             for s in b
                                         )
                                     ),
+                                    self._bible_variants or None,
                                 ),
                             )
                         if all(s.target is not None for s in text_segs):
-                            self._publish_chapter(store, ci, terms=term_snapshot)
+                            self._publish_chapter(store, ci)
                             self._runtime.usage.flush(store, scope="chapter")
                 else:
                     self._runtime.usage.flush(store, scope="translation")
@@ -1676,17 +1610,10 @@ class TranslationService:
             raise failure
         return done
 
-    def _publish_chapter(
-        self,
-        store: Storage,
-        ci: int,
-        *,
-        terms: list[GlossaryTerm] | None = None,
-        variants: dict[str, list[str]] | None = None,
-    ) -> None:
+    def _publish_chapter(self, store: Storage, ci: int) -> None:
         chapter = self._open_chapters.pop(ci)
         self._awaiting_polish.discard(ci)
-        self._apply_chapter_hygiene(store, chapter, terms=terms, variants=variants)
+        self._apply_chapter_hygiene(store, chapter)
         unpolished = any(segment.meta.get(POLISH_FAILED) for segment in chapter.text_segments)
         if unpolished:
             chapter.meta["unpolished"] = True
@@ -1861,8 +1788,7 @@ class TranslationService:
         if job.chapter in self._awaiting_polish and (
             queue is None or job.chapter not in queue.pending_chapters()
         ):
-            terms, variants = self._publish_terms.pop(job.chapter, (None, None))
-            self._publish_chapter(store, job.chapter, terms=terms, variants=variants)
+            self._publish_chapter(store, job.chapter)
 
     def _align_batch_context(
         self,
