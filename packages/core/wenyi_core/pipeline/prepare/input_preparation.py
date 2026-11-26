@@ -13,7 +13,7 @@ from typing import Any
 from ...assemble.writer_common import validate_pdf_source_format
 from ...config import Config
 from ...events import ProgressFn
-from ...ingest.boilerplate import mark_boilerplate_segments
+from ...ingest.boilerplate import BUILTIN_RULES_VERSION, mark_boilerplate_segments
 from ...ingest.epub_reader import peek_epub_title
 from ...ingest.fb2_reader import peek_fb2_title
 from ...ingest.pdf_reader import cached_epub_source
@@ -37,6 +37,7 @@ def ingest_config(config: Config) -> dict[str, Any]:
     }
     if config.pipeline.skip_boilerplate:
         data["skip_boilerplate"] = True
+        data["boilerplate_rules_version"] = BUILTIN_RULES_VERSION
         data["boilerplate_patterns"] = list(config.pipeline.boilerplate_patterns)
     return data
 

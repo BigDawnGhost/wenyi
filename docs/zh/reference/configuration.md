@@ -355,10 +355,9 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 | `pipeline.polish_concurrency` | `1` | 标准模式润色并发，整数 ≥ 1。`1` 在下一批开始前润色当前批；大于 `1` 时先保存初稿，在后台润色并继续翻译，最多排队该值两倍的批次。provider `max_concurrency` 仍然生效。`three_draft_synthesis` 忽略此项。见[后台润色](../guide/pipeline.md#deferred-polishing)。 |
 | `pipeline.deterministic_hygiene` | `true` | 原文段落不含字面 `\n` 时，将译文中紧贴正文泄漏的字面 `\n` 转为换行（不处理代码、LaTeX 与 URL 片段）。不改写引号、破折号、说话标记、分行或译名；导出时的引号样式请用 `output.quote_style`。 |
 | `pipeline.consistency_sweep` | `false` | 启用快速译后跨章扫描：通过稀疏编辑器修补缺少术语规范译名的段落，并在 `glossary_mode: compiled` 下校准 Book Bible 标记为有分歧的称号漂移（英文目标）；未编译 Book Bible 时只执行术语补齐；不会用前文章节的译文覆盖重复段落。 |
-| `pipeline.entity_markers` | `false` | 实验选项：草稿翻译时将高稳定专有名词替换为不透明 `⟦N#⟧` 标记，译后按冻结术语表确定性回填。 |
 | `pipeline.batch_glossary` | `all` | `all` 向每个正文翻译、润色和精翻请求发送全量实体术语（EPUB 目录标题仅在命中本批原文时携带）；`relevant` 只向每批发送与其文本匹配的词条，并让抽取只看到被抽取文本中出现的已有词条。见[翻译上下文与术语库](../guide/pipeline.md#context-and-glossary)。 |
 | `pipeline.glossary_prompt_tokens` | `0` | 可选的单次请求术语表 token 上限（`cl100k_base`，整数 ≥ 0）。`0` 表示不设上限，发送内容只由 `batch_glossary` 决定。设置上限后，`all` 保留追加稳定的前导词条加命中本批的后续词条，`relevant` 限制命中词条总量。 |
-| `pipeline.skip_boilerplate` | `false` | 可选的导入时清理开关：将抓取站点的水印、广告标记和零散残片标记为 `meta.skip = true` 而非删除，从而跳过翻译与导出同时保持段落索引与锚点稳定。 |
+| `pipeline.skip_boilerplate` | `false` | 可选的导入时清理开关：将抓取站点的水印（域名与推广文字同行）、广告网络标记和单独的 `>` 或竖线（`\|`）行标记为 `meta.skip = true` 而非删除，从而跳过翻译与导出同时保持段落索引与锚点稳定。单独的网址行和 `...No` 这类以标点开头的短句保留为正文；站点特有的残留请用 `boilerplate_patterns` 匹配。内置规则变更后会重新解析缓存的原文，但已初始化的项目在重新导入前保留原有的跳过标记。 |
 | `pipeline.boilerplate_patterns` | `[]` | 启用 `pipeline.skip_boilerplate` 时额外匹配的自定义正则表达式列表。 |
 | `pipeline.align_retry_limit` | `2` | 额外结构输出尝试次数；`0` 关闭。 |
 | `pipeline.rolling_context_tokens` | `512` | 前文译文预算，整数 ≥ 0，按 `cl100k_base` 计数。 |
@@ -464,7 +463,7 @@ BabelDOC 是可选的独立 AGPL 服务，用于尽量保留 PDF 版式。
 | `output.bilingual_order` | `target_first` | `target_first` 或 `source_first`；选择按段配对格式中在前的版本，以及 PDF 并列页中位于左侧的版本。 |
 | `output.bilingual_preserve_source_style` | `false` | 保留已记录的原文样式，替代该格式的默认原文显示方式。 |
 | `output.about_page` | `true` | 为 EPUB 添加“关于此翻译”项目说明页。 |
-| `output.quote_style` | `preserve` | `preserve`、`typographic`（`“ ” ‘ ’`）或 `straight`（`" '`）。仅在拉丁字母目标语言导出时生效，不修改已保存译文及双语中的原文。 |
+| `output.quote_style` | `preserve` | `preserve`、`typographic`（`“ ” ‘ ’`）或 `straight`（`" '`）。`typographic` 采用英语的引号配对与省音规则，仅对英语目标语言生效，其他目标语言保留原有引号；`straight` 在拉丁字母目标语言中将所有弯引号（含 `„ ‚`）转为 ASCII 引号，不改动法式引号 `« »`。仅在导出时生效，不修改已保存译文及双语中的原文。 |
 
 `bilingual_preserve_source_style` 与顺序独立。
 EPUB/HTML 中，`true` 用正常书籍样式替代淡化原文。

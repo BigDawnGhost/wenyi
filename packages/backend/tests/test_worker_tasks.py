@@ -62,6 +62,21 @@ def test_previously_queued_jobs_keep_other_frozen_config_settings():
     assert snapshot["output"]["punctuation_normalize"] is True
 
 
+@pytest.mark.parametrize("value", [False, True])
+def test_previously_queued_jobs_drop_retired_entity_markers(value):
+    context = current_context()
+    repository = cast(Mock, context.repository)
+    snapshot = {"pipeline": {"entity_markers": value, "review": False}}
+    repository.get_project.return_value = {"id": "p"}
+    repository.get_job_by_arq_id.return_value = {"params": {"config_snapshot": snapshot}}
+
+    config = bindings.build_config_for(context, "p", "queued")
+
+    assert config.pipeline.review is False
+    assert "entity_markers" not in config.pipeline.model_dump()
+    assert snapshot["pipeline"]["entity_markers"] is value
+
+
 @pytest.mark.parametrize("order", ["target_first", "source_first"])
 @pytest.mark.parametrize("preserve_source_style", [False, True])
 @pytest.mark.parametrize("source_changes", [False, True])

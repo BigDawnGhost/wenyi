@@ -59,6 +59,8 @@ pipeline:
   # alone decides what is sent. With a cap, all mode keeps the append-stable leading run within
   # it plus matching later entries, and relevant mode caps matched entries.
   glossary_prompt_tokens: 0
+  # Optional ingest-time filter for domain promo watermarks, ad-network markers and lone >/| lines;
+  # add boilerplate_patterns for site-specific debris.
   skip_boilerplate: false
   boilerplate_patterns: []
   review: true # Run final review after whole-book translation; disable with --no-review
@@ -77,8 +79,6 @@ pipeline:
   deterministic_hygiene: true
   # Fast post-translation cross-chapter sweep: patches missed glossary terms; title drift needs compiled mode.
   consistency_sweep: false
-  # Experimental: replace unambiguous high-stability proper nouns with opaque ⟦N#⟧ markers during drafting.
-  entity_markers: false
   rolling_context_tokens: 512 # Recent translation budget in tokens (tiktoken cl100k_base)
   glossary_note_workers: 0 # Incremental evidence notes: 0 disables, 1-16 workers per batch
   book_understanding: true # Prescan complete chapters for digests and a whole-book synopsis; disable to save prescan cost
@@ -117,7 +117,7 @@ output:
   # true=preserve source styles; false=muted source in EPUB/HTML, normal body text in DOCX
   bilingual_preserve_source_style: false
   about_page: true # Append an About This Translation page
-  quote_style: preserve # preserve | typographic | straight (export-only, Latin-script targets)
+  quote_style: preserve # preserve | typographic (English targets) | straight (Latin-script targets); export-only
 """
 
 
@@ -201,8 +201,6 @@ class PipelineConfig(BaseModel):
     deterministic_hygiene: bool = True
     # Fast cross-chapter sweep: missed glossary terms, plus Book Bible title drift in compiled mode.
     consistency_sweep: bool = False
-    # Experimental: transport stable proper nouns as opaque ⟦N#⟧ markers during drafting.
-    entity_markers: bool = False
     rolling_context_tokens: int = Field(default=512, ge=0)
     # Note generation requires an opted-in workflow runner.
     glossary_note_workers: int = Field(default=0, ge=0, le=16)

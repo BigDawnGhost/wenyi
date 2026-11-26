@@ -16,7 +16,6 @@ from ...llm.retrying import is_resumable_provider_interrupt
 from ...markup.ruby import strip_ruby_markers
 from ...models.document import Segment
 from ...models.glossary import GlossaryTerm
-from .entity_markers import mask_batch_entities, unmask_batch_entities
 
 
 @dataclass(frozen=True)
@@ -35,7 +34,6 @@ class BatchPlan:
     annotation_contexts: list[list[dict[str, str]]]
     next_source: str
     allow_empty_translations: bool = False
-    entity_markers: bool = False
     variants_by_source: Mapping[str, Sequence[str]] | None = None
 
     @classmethod
@@ -53,7 +51,6 @@ class BatchPlan:
         next_source: str,
         *,
         allow_empty_translations: bool = False,
-        entity_markers: bool = False,
         variants_by_source: Mapping[str, Sequence[str]] | None = None,
     ) -> BatchPlan:
         """Detach mutable term and annotation metadata from subsequent chapter updates."""
@@ -70,7 +67,6 @@ class BatchPlan:
             deepcopy(annotation_contexts),
             next_source,
             allow_empty_translations,
-            entity_markers,
             dict(variants_by_source) if variants_by_source else None,
         )
 
@@ -206,26 +202,7 @@ class TranslationBatchExecutor:
 
     def translate(self, plan: BatchPlan) -> BatchDraft:
         """Translate one batch thread-safely and return its per-call transcript."""
-        sources_for_model = list(plan.sources)
         context_for_model = plan.context
-        mask_plan = None
-        if plan.entity_markers and plan.terms:
-            skip_indices = {
-                idx
-                for idx, refs in enumerate(plan.annotation_contexts or ())
-                if any(ref.get("marker") is not None for ref in refs)
-            }
-            mask_plan = mask_batch_entities(
-                sources_for_model, plan.terms, skip_indices=skip_indices
-            )
-            if mask_plan.active:
-                sources_for_model = list(mask_plan.masked_sources)
-                context_for_model = (
-                    f"{context_for_model}\n\n{mask_plan.legend_block}".strip()
-                    if context_for_model
-                    else mask_plan.legend_block
-                )
-
         has_couplets = bool(verse_block_indices(plan.sources))
         has_embedded = any(
             has_embedded_verse(src, source_lang=self._translator.src) for src in plan.sources
@@ -239,42 +216,18 @@ class TranslationBatchExecutor:
                 f"{context_for_model}\n\n{verse_note}".strip() if context_for_model else verse_note
             )
 
-        def run(sources: list[str], context: str):
-            return self._translator.translate_batch_with_transcript(
-                sources,
-                glossary_terms=list(plan.terms),
-                style=plan.style,
-                context=context,
-                book_synopsis=plan.book_synopsis,
-                chapter_digest=plan.chapter_digest,
-                annotation_contexts=plan.annotation_contexts,
-                next_source=plan.next_source,
-                allow_empty_translations=plan.allow_empty_translations,
-            )
-
-        targets, turn, indices = run(sources_for_model, context_for_model)
+        targets, turn, indices = self._translator.translate_batch_with_transcript(
+            list(plan.sources),
+            glossary_terms=list(plan.terms),
+            style=plan.style,
+            context=context_for_model,
+            book_synopsis=plan.book_synopsis,
+            chapter_digest=plan.chapter_digest,
+            annotation_contexts=plan.annotation_contexts,
+            next_source=plan.next_source,
+            allow_empty_translations=plan.allow_empty_translations,
+        )
         cleaned_targets = [strip_ruby_markers(target) for target in targets]
-        if mask_plan is not None and mask_plan.active:
-            cleaned_targets, _filled, unresolved = unmask_batch_entities(cleaned_targets, mask_plan)
-            # Filled targets differ from the masked assistant turn, so disable continuation polish.
-            turn = None
-            indices = None
-            if unresolved:
-                # A dropped or mangled marker loses its entity; translate the plain source once.
-                plain_context = context_for_model.replace(mask_plan.legend_block, "").strip()
-                targets, turn, indices = run(list(plan.sources), plain_context)
-                # Fill any marker the plain call still echoes, rather than publish it.
-                cleaned_targets, filled, _unresolved = unmask_batch_entities(
-                    [strip_ruby_markers(target) for target in targets], mask_plan
-                )
-                if any("⟦" in text or "⟧" in text for text in cleaned_targets):
-                    raise ValueError(
-                        "Plain-source entity-marker retry returned residual marker tokens"
-                    )
-                if filled:
-                    # The transcript still holds the echoed markers; never continue it.
-                    turn = None
-                    indices = None
         return BatchDraft(
             tuple(cleaned_targets),
             turn if turn is not None and indices is not None else None,

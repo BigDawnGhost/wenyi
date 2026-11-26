@@ -124,7 +124,6 @@ class _ParallelWaveSpec:
     quote_references_by_batch: tuple[str, ...]
     polish: bool
     polish_mode: str
-    entity_markers: bool
     rolling_context_tokens: int
     quote_memory: QuoteMemory | None = None
     variants_by_source: dict[str, tuple[str, ...]] | None = None
@@ -750,7 +749,6 @@ class TranslationService:
                 batch_annotations,
                 next_source,
                 allow_empty_translations=allow_empty_translations,
-                entity_markers=self._runtime.config.pipeline.entity_markers,
                 variants_by_source=self._bible_variants or None,
             )
             if self._runtime.config.pipeline.translation_mode == "three_draft_synthesis":
@@ -1095,7 +1093,6 @@ class TranslationService:
                     annotation_contexts=bspec.annotation_contexts,
                     next_source=bspec.next_source,
                     allow_empty_translations=False,
-                    entity_markers=spec.entity_markers,
                     variants_by_source=spec.variants_by_source,
                 )
                 glossary_tokens = count_tokens(
@@ -1354,7 +1351,6 @@ class TranslationService:
                             quote_references_by_batch=tuple(qchunk),
                             polish=pipeline.polish,
                             polish_mode=pipeline.polish_mode,
-                            entity_markers=pipeline.entity_markers,
                             rolling_context_tokens=pipeline.rolling_context_tokens,
                             quote_memory=self._quote_memory.clone()
                             if self._quote_memory is not None
@@ -1379,7 +1375,6 @@ class TranslationService:
                         quote_references_by_batch=tuple(quote_refs),
                         polish=pipeline.polish,
                         polish_mode=pipeline.polish_mode,
-                        entity_markers=pipeline.entity_markers,
                         rolling_context_tokens=pipeline.rolling_context_tokens,
                         quote_memory=self._quote_memory.clone()
                         if self._quote_memory is not None

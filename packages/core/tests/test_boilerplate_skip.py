@@ -60,10 +60,8 @@ def _write_test_epub(path, body_html: str) -> None:
         ("记住我们看书网", "builtin:zh_site_watermark"),
         ("请...您....收藏_6191书1吧…", "builtin:zh_site_watermark"),
         ("最新章节请访问笔趣阁 www.example.com", "builtin:zh_site_watermark"),
-        ("https://www.biquge.example/book/123", "builtin:zh_site_watermark"),
         ("Ads by Pubfuture", "builtin:ad_network_marker"),
         ("Ad by Google", "builtin:ad_network_marker"),
-        ("，.??m", "builtin:scraper_stray_fragment"),
         (">", "builtin:scraper_stray_fragment"),
     ],
 )
@@ -86,6 +84,16 @@ def test_builtin_boilerplate_rules_match_known_artifacts(text: str, expected_pre
         "——",
         "***",
         "A normal paragraph of story text.",
+        # A bare URL can be a bibliography entry or a link a technical book prints on purpose.
+        "https://doi.org/10.1016/S0140-6736(20)30183-5",
+        "https://www.biquge.example/book/123",
+        "[www.example.org]",
+        # Trailing-off dialogue and interjections are story text, not scraper debris.
+        "...No",
+        "...Oh",
+        "?!Ah",
+        "……嗯",
+        "，.??m",
     ],
 )
 def test_builtin_boilerplate_rules_avoid_false_positives(text: str):
@@ -111,7 +119,7 @@ def test_ingest_skip_boilerplate_preserves_indices_and_anchors_and_excludes_from
         "<p>第一段正文故事。</p>"
         "<p>记住我们看书网</p>"
         "<p>Ads by Pubfuture</p>"
-        "<p>，.??m</p>"
+        "<p>好书尽在www.qinkan.net</p>"
         "<p>39</p>"
         "<p>&gt;</p>"
         "<p>第二段正文故事。</p>",
@@ -193,7 +201,7 @@ def test_ingest_skip_boilerplate_preserves_indices_and_anchors_and_excludes_from
     orch.run_steps(str(epub_path), {"translate"})
 
     joined_inputs = "\n".join(seen_inputs)
-    for junk in ("记住我们看书网", "Ads by Pubfuture", "，.??m"):
+    for junk in ("记住我们看书网", "Ads by Pubfuture", "好书尽在www.qinkan.net"):
         assert junk not in joined_inputs
 
     # Verify initialization event recorded skipped count.
@@ -229,7 +237,7 @@ def test_ingest_skip_boilerplate_preserves_indices_and_anchors_and_excludes_from
                 )
             assert "EN:第一段正文故事。" in body
             assert "EN:第二段正文故事。" in body
-            for junk in ("记住我们看书网", "Ads by Pubfuture", "，.??m"):
+            for junk in ("记住我们看书网", "Ads by Pubfuture", "好书尽在www.qinkan.net"):
                 assert junk not in body, f"Found {junk!r} in {fmt} (bilingual={bilingual})"
             if fmt in {"txt", "markdown", "docx"}:
                 assert "\n39\n" not in f"\n{body}\n"
@@ -257,3 +265,13 @@ def test_mark_boilerplate_segments_is_noop_when_disabled(tmp_path):
     )
     assert mark_boilerplate_segments(doc, enabled=False) == []
     assert not doc.chapters[0].segments[0].meta.get("skip")
+
+
+def test_parse_cache_key_tracks_builtin_boilerplate_rules():
+    from wenyi_core.config import Config
+    from wenyi_core.ingest.boilerplate import BUILTIN_RULES_VERSION
+    from wenyi_core.pipeline.prepare.input_preparation import ingest_config
+
+    cfg = Config.from_dict({"pipeline": {"skip_boilerplate": True}})
+    assert ingest_config(cfg)["boilerplate_rules_version"] == BUILTIN_RULES_VERSION
+    assert "boilerplate_rules_version" not in ingest_config(Config())

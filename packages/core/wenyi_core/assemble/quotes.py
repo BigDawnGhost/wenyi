@@ -7,8 +7,23 @@ from typing import Literal
 
 QuoteStyle = Literal["preserve", "typographic", "straight"]
 
-# Latin-script targets where English/typographic curly vs straight quotes apply.
+# Latin-script targets whose quotes can be straightened without changing their style.
 LATIN_SCRIPT_TARGETS = frozenset({"en", "fr", "de", "es", "it", "pt", "vi"})
+# Typographic mode applies English quote pairing and elisions, so it only fits English.
+TYPOGRAPHIC_TARGETS = frozenset({"en"})
+# Every curly quotation mark, including low-9 openers and reversed forms, maps to ASCII.
+_STRAIGHT_QUOTES = str.maketrans(
+    {
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u201e": '"',
+        "\u201f": '"',
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201a": "'",
+        "\u201b": "'",
+    }
+)
 
 _MARKUP_TOKEN_RE = re.compile(r"""(<(?:[^>"']|"[^"]*"|'[^']*')*>|〘[^〙]*〙)""")
 _BLOCK_TAG_RE = re.compile(
@@ -53,11 +68,19 @@ _OPENING_PREDECESSORS = frozenset(" \t\r\n([{\u2014\u2013\u2026/-")
 _CLOSING_FOLLOWERS = frozenset(" \t\r\n.,!?;:)]}\u2014\u2013\u2026")
 
 
-def supports_quote_normalization(target_lang: str | None) -> bool:
-    """Return True when the target language uses Latin script quote conventions."""
+def _base_language(target_lang: str | None) -> str:
     if not target_lang:
+        return ""
+    return target_lang.strip().replace("_", "-").split("-")[0].lower()
+
+
+def supports_quote_normalization(target_lang: str | None, style: QuoteStyle = "straight") -> bool:
+    """Return True when ``style`` keeps the target language's quote conventions intact."""
+    if style == "preserve":
         return False
-    base = target_lang.strip().replace("_", "-").split("-")[0].lower()
+    base = _base_language(target_lang)
+    if style == "typographic":
+        return base in TYPOGRAPHIC_TARGETS
     return base in LATIN_SCRIPT_TARGETS
 
 
@@ -173,13 +196,7 @@ def _normalize_straight(text: str) -> str:
     """Convert typographic quotes to straight ASCII quotes while preserving markup tokens."""
     tokens = _MARKUP_TOKEN_RE.split(text)
     for i in range(0, len(tokens), 2):
-        tokens[i] = (
-            tokens[i]
-            .replace("\u201c", '"')
-            .replace("\u201d", '"')
-            .replace("\u2018", "'")
-            .replace("\u2019", "'")
-        )
+        tokens[i] = tokens[i].translate(_STRAIGHT_QUOTES)
     return "".join(tokens)
 
 
@@ -191,10 +208,12 @@ def normalize_quotes(
 ) -> str:
     """Normalize quotes in ``text`` for export according to ``style`` and ``target_lang``.
 
-    Returns ``text`` unchanged when ``style == "preserve"`` or when ``target_lang`` is not a
-    Latin-script language. Preserves HTML tags and protected-object markers verbatim.
+    ``straight`` applies to Latin-script targets; ``typographic`` produces English curly
+    quotes and elisions, so it applies to English targets only. Other targets, and
+    ``preserve``, return ``text`` unchanged. HTML tags and protected-object markers are kept
+    verbatim.
     """
-    if not text or style == "preserve" or not supports_quote_normalization(target_lang):
+    if not text or style == "preserve" or not supports_quote_normalization(target_lang, style):
         return text
     if style == "straight":
         return _normalize_straight(text)

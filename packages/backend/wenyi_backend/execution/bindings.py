@@ -64,11 +64,17 @@ def build_config_for(context: BackendContext, pid: str, run_id: str | None = Non
     if snapshot:
         document = {**snapshot, "paths": {"state_dir": state_dir}}
         output = document.get("output")
+        # Frozen job snapshots are not rewritten by saved-settings rebuilds, so drop settings
+        # retired since the job was queued.
         if isinstance(output, dict) and "punctuation_normalize" in output:
-            # Frozen job snapshots are not rewritten by saved-settings rebuilds.
             output = dict(output)
             output.pop("punctuation_normalize")
             document["output"] = output
+        pipeline = document.get("pipeline")
+        if isinstance(pipeline, dict) and "entity_markers" in pipeline:
+            pipeline = dict(pipeline)
+            pipeline.pop("entity_markers")
+            document["pipeline"] = pipeline
         return config_from_document(document)
     return effective_config(
         project, defaults=context.settings_store.load().config, state_dir=state_dir

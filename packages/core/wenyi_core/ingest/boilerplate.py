@@ -105,20 +105,14 @@ _ZH_WATERMARK_PATTERNS: tuple[re.Pattern[str], ...] = (
         r".{0,24}(?:首发|更新|网址|域名|阅读|提供|www\.|http|\.com|\.net|\.cc|\.cn)",
         re.IGNORECASE,
     ),
-    # Bare standalone URL lines (with optional decorative brackets or punctuation).
-    re.compile(
-        r"^[\s\[\]【】()（）<>《》*_~-]{0,6}"
-        r"(?:https?://|www\.)[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/[^\s]*)?"
-        r"[\s\[\]【】()（）<>《》*_~-]{0,6}$",
-        re.IGNORECASE,
-    ),
 )
+
+# Bump when the built-in rules change so cached parses re-mark skipped segments.
+BUILTIN_RULES_VERSION = 2
 
 _STRAY_FRAGMENT_PATTERNS: tuple[re.Pattern[str], ...] = (
     # Lone scraper angle-bracket / pipe markers such as ">" or ">>".
     re.compile(r"^\s*[><|]{1,3}\s*$"),
-    # Garbled punctuation-plus-short-ASCII scraper artifacts such as "，.??m".
-    re.compile(r"^\s*[,，。\.?!？！;；:：~`^\\/_]{2,}[A-Za-z]{1,3}\s*$"),
 )
 
 

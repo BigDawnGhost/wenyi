@@ -64,6 +64,43 @@ def test_normalize_quotes_straight_preserve_and_non_latin():
     assert normalize_quotes(zh, "straight", target_lang="ja") == zh
 
 
+@pytest.mark.parametrize(
+    ("text", "target_lang"),
+    [
+        ("\"Hallo,\" sagte sie. 'Na ja.'", "de"),
+        ("„Hallo“, sagte sie.", "de-AT"),
+        ('"Bonjour," dit-il.', "fr"),
+        ("« Bonjour », dit-il. L'homme partit.", "fr"),
+        ('"Hola," dijo.', "es"),
+        ("\"Ciao,\" disse. 'Sì.'", "it"),
+        ('"Olá," disse.', "pt-BR"),
+        ('"Xin chào," cô nói.', "vi"),
+    ],
+)
+def test_typographic_quotes_leave_non_english_targets_unchanged(text, target_lang):
+    # English curly quotes and elision rules are wrong for these languages' conventions.
+    assert normalize_quotes(text, "typographic", target_lang=target_lang) == text
+
+
+def test_typographic_quotes_apply_to_english_regional_targets():
+    assert normalize_quotes('"Hi," he said.', "typographic", target_lang="en-GB") == (
+        "“Hi,” he said."
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("„Hallo“, sagte sie. ‚Na ja‘.", "\"Hallo\", sagte sie. 'Na ja'."),
+        ("“Bonjour,” dit-il. L’homme partit.", '"Bonjour," dit-il. L\'homme partit.'),
+        ("« Bonjour », dit-il.", "« Bonjour », dit-il."),
+    ],
+)
+def test_straight_quotes_convert_every_curly_quote_without_mixing_styles(text, expected):
+    lang = "fr" if "Bonjour" in text else "de"
+    assert normalize_quotes(text, "straight", target_lang=lang) == expected
+
+
 def test_output_quote_style_config_validation():
     assert Config().output.quote_style == "preserve"
     assert (
@@ -212,3 +249,9 @@ def test_export_view_normalizes_quotes_across_continuation_segments(tmp_path):
     chapter = view.load_chapter(0)
     assert chapter.segments[0].target == "“First half "
     assert chapter.segments[1].target == "second half.”"
+
+
+def test_preserve_style_never_reports_normalization():
+    from wenyi_core.assemble.quotes import supports_quote_normalization
+
+    assert supports_quote_normalization("en", "preserve") is False

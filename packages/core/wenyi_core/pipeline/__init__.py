@@ -71,7 +71,6 @@ from .translate import (
     bible_seed,  # noqa: F401
     consistency_sweep,  # noqa: F401
     context,  # noqa: F401
-    entity_markers,  # noqa: F401
     extraction_queue,  # noqa: F401
     glossary_notes,  # noqa: F401
     polish_queue,  # noqa: F401
@@ -97,7 +96,6 @@ __all__ = [
     "polish_queue",
     "extraction_queue",
     "bible_seed",
-    "entity_markers",
     "post_normalize",
     "quote_memory",
     "title_translation",

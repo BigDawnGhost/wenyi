@@ -3,7 +3,6 @@
 - Chapter-parallel drafting with positional source lookbehind, single-writer order
   invariance, crash/resume safety, and huge-chapter wave splitting
 - Sparse source-grounded semantic editor (polish_mode='sparse')
-- Opaque entity-marker transport (entity_markers=True)
 """
 
 from __future__ import annotations
@@ -21,10 +20,6 @@ from wenyi_core.config import Config
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.translate.entity_markers import (
-    mask_batch_entities,
-    unmask_batch_entities,
-)
 
 
 def test_bible_candidates_mine_digest_entities_and_filter_forms_of_address():
@@ -201,26 +196,6 @@ def test_sparse_semantic_editor_patches_only_defects_and_preserves_markers():
     assert res.targets[1] == "Do not treat it as casual talk and keep reciting it!"
     # Patch 2 tried to drop ⟦OBJ:1⟧ and was safely rejected.
     assert res.targets[2] == "The third paragraph has ⟦OBJ:1⟧."
-
-
-def test_entity_markers_mask_and_unmask_possessives():
-    terms = [
-        GlossaryTerm(source="孫悟空", target="Sun Wukong", type="person", gender="male"),
-        GlossaryTerm(source="悟空", target="Wukong", type="person", gender="male"),
-        GlossaryTerm(source="花果山", target="Flower-Fruit Mountain", type="place"),
-    ]
-    plan = mask_batch_entities(["孫悟空回到了花果山，悟空很高興。"], terms)
-    assert plan.active
-    assert "⟦N0⟧" in plan.masked_sources[0]
-    assert "bare name, no 'the'" in plan.legend_block
-    assert "孫悟空" not in plan.masked_sources[0]
-    assert "花果山" not in plan.masked_sources[0]
-    # Simulate model output using the markers + possessive.
-    model_out = ["⟦N0⟧ returned to ⟦N1⟧, and ⟦N2⟧'s heart was glad."]
-    filled, filled_n, unresolved_n = unmask_batch_entities(model_out, plan)
-    assert unresolved_n == 0
-    assert filled_n == 3
-    assert filled[0] == "Sun Wukong returned to Flower-Fruit Mountain, and Wukong's heart was glad."
 
 
 def test_parallel_compiled_pipeline_is_order_independent_and_resumable(tmp_path: Path):
@@ -498,73 +473,6 @@ def test_bible_fingerprint_changes_with_the_style_brief():
     assert a != b
 
 
-def test_entity_markers_match_whole_words_in_space_delimited_sources():
-    terms = [GlossaryTerm(source="Ann", target="Anne", type="person", gender="female")]
-    plan = mask_batch_entities(["Anna met Ann at the Annual fair."], terms)
-    assert plan.masked_sources == ("Anna met ⟦N0⟧ at the Annual fair.",)
-    filled, _, unresolved = unmask_batch_entities(["Anna a vu ⟦N0⟧ à la foire."], plan)
-    assert filled == ["Anna a vu Anne à la foire."]
-    assert unresolved == 0
-
-
-def test_entity_markers_count_dropped_markers_as_unresolved():
-    terms = [GlossaryTerm(source="孫悟空", target="Sun Wukong", type="person")]
-    plan = mask_batch_entities(["孫悟空回來了。"], terms)
-    _, _, unresolved = unmask_batch_entities(["He came back."], plan)
-    assert unresolved == 1
-
-
-def test_entity_markers_accept_a_pronoun_for_a_repeated_name():
-    terms = [GlossaryTerm(source="孫悟空", target="Sun Wukong", type="person")]
-    plan = mask_batch_entities(["孫悟空說了話。", "孫悟空笑了。"], terms)
-    filled, _, unresolved = unmask_batch_entities(["⟦N0⟧ spoke.", "He laughed."], plan)
-    assert filled == ["Sun Wukong spoke.", "He laughed."]
-    assert unresolved == 0
-    _, _, unknown = unmask_batch_entities(["⟦N0⟧ spoke.", "⟦N7⟧ laughed."], plan)
-    assert unknown > 0
-    _, _, half = unmask_batch_entities(["⟦N0⟧ spoke.", "N0⟧ laughed."], plan)
-    assert half > 0
-
-
-def test_batch_translation_retranslates_plain_source_when_a_marker_is_dropped():
-    from wenyi_core.agents.translator import Translator
-    from wenyi_core.pipeline.translate.translation_batch import BatchPlan, TranslationBatchExecutor
-
-    user_messages: list[str] = []
-
-    def handler(messages, tier, json_mode):
-        user = messages[-1]["content"]
-        user_messages.append(user)
-        if "⟦N0⟧" in user:
-            return json.dumps({"translations": ["He came back."]})
-        return json.dumps({"translations": ["Sun Wukong came back."]})
-
-    cfg = Config.from_dict(
-        {"language": {"source": "zh-Hant", "target": "en"}, "llm": {"preset": "fake"}}
-    )
-    translator = Translator(FakeClient(handler=handler), cfg)
-    executor = TranslationBatchExecutor(translator, None)
-    plan = BatchPlan(
-        chapter=0,
-        start_index=0,
-        segment_indices=(0,),
-        sources=("孫悟空回來了。",),
-        terms=(GlossaryTerm(source="孫悟空", target="Sun Wukong", type="person"),),
-        context="",
-        style="",
-        book_synopsis="",
-        chapter_digest="",
-        annotation_contexts=[[]],
-        next_source="",
-        allow_empty_translations=False,
-        entity_markers=True,
-    )
-    draft = executor.translate(plan)
-    assert draft.targets == ("Sun Wukong came back.",)
-    assert len(user_messages) == 2
-    assert "⟦N0⟧" not in user_messages[1]
-
-
 _PARALLEL_BOOK = (
     "# 第一章\n\n行者跟隨三藏走出長安。\n\n行者笑著說道：前面有山。\n\n"
     "# 第二章\n\n三藏問行者：此山何名？\n\n行者答道：這是兩界山。\n\n"
@@ -738,7 +646,6 @@ def test_parallel_worker_gives_non_body_batches_no_context(tmp_path: Path):
         quote_references_by_batch=("", "", ""),
         polish=False,
         polish_mode="full",
-        entity_markers=False,
         rolling_context_tokens=1000,
     )
     _, _, outcomes, error, completed = service._translate_wave_worker(spec)
@@ -854,7 +761,6 @@ def test_parallel_worker_stops_its_wave_on_a_polish_interrupt(tmp_path: Path):
         quote_references_by_batch=("", "", ""),
         polish=True,
         polish_mode="full",
-        entity_markers=False,
         rolling_context_tokens=1000,
     )
     _, _, outcomes, error, completed = service._translate_wave_worker(spec)
@@ -879,12 +785,6 @@ def test_bible_candidates_mine_cyrillic_names():
     corpus = "Иван пришёл. " * 6 + "Мария ждала. " * 6
     sources = {c.source for c in mine_bible_candidates(digests, corpus, source_lang="ru")}
     assert "Иван" in sources
-
-
-def test_entity_markers_leave_sources_with_literal_marker_brackets_unmasked():
-    terms = [GlossaryTerm(source="孫悟空", target="Sun Wukong", type="person")]
-    plan = mask_batch_entities(["孫悟空寫下⟦N0⟧。"], terms)
-    assert not plan.active
 
 
 def test_only_chapter_indexes_quotes_from_the_whole_book(tmp_path: Path):
@@ -951,44 +851,10 @@ def test_parallel_worker_translates_nothing_after_the_run_stops(tmp_path: Path):
         quote_references_by_batch=("",),
         polish=False,
         polish_mode="full",
-        entity_markers=False,
         rolling_context_tokens=1000,
     )
     _, _, outcomes, error, completed = service._translate_wave_worker(spec, None, stop)
     assert plans == [] and outcomes == [] and error is None and not completed
-
-
-def test_marker_retry_that_echoes_a_marker_is_filled_and_not_continued():
-    from wenyi_core.agents.translator import Translator
-    from wenyi_core.pipeline.translate.translation_batch import BatchPlan, TranslationBatchExecutor
-
-    def handler(messages, tier, json_mode):
-        if "⟦N0⟧" in messages[-1]["content"]:
-            return json.dumps({"translations": ["He came back."]})
-        return json.dumps({"translations": ["⟦N0⟧ came back."]})
-
-    cfg = Config.from_dict(
-        {"language": {"source": "zh-Hant", "target": "en"}, "llm": {"preset": "fake"}}
-    )
-    executor = TranslationBatchExecutor(Translator(FakeClient(handler=handler), cfg), None)
-    plan = BatchPlan(
-        chapter=0,
-        start_index=0,
-        segment_indices=(0,),
-        sources=("孫悟空回來了。",),
-        terms=(GlossaryTerm(source="孫悟空", target="Sun Wukong", type="person"),),
-        context="",
-        style="",
-        book_synopsis="",
-        chapter_digest="",
-        annotation_contexts=[[]],
-        next_source="",
-        allow_empty_translations=False,
-        entity_markers=True,
-    )
-    draft = executor.translate(plan)
-    assert draft.targets == ("Sun Wukong came back.",)
-    assert draft.turn is None
 
 
 def test_parallel_worker_returns_drafted_batches_on_a_budget_stop(tmp_path: Path):
@@ -1034,7 +900,6 @@ def test_parallel_worker_returns_drafted_batches_on_a_budget_stop(tmp_path: Path
         quote_references_by_batch=("", "", ""),
         polish=False,
         polish_mode="full",
-        entity_markers=False,
         rolling_context_tokens=1000,
     )
     _, _, outcomes, error, completed = service._translate_wave_worker(spec)
@@ -1641,75 +1506,6 @@ def test_sparse_editor_rejects_patches_that_drop_or_invent_object_markers():
     assert res.patched_indices == ()
 
 
-def test_entity_markers_skip_segments_with_protected_object_offsets():
-    from wenyi_core.agents.translator import Translator
-    from wenyi_core.pipeline.translate.translation_batch import BatchPlan, TranslationBatchExecutor
-
-    seen_prompts: list[str] = []
-
-    def handler(messages, tier, json_mode):
-        user_msg = messages[-1]["content"]
-        seen_prompts.append(user_msg)
-        return json.dumps(
-            [
-                "Great Sage Sun Wukong spoke. 〘object:obj1〙",
-                "Pilgrim 〘object:obj2〙 spoke.",
-                "⟦N0⟧ laughed.",
-            ]
-        )
-
-    cfg = Config()
-    cfg.pipeline.entity_markers = True
-    translator = Translator(FakeClient(handler=handler), cfg)
-    executor = TranslationBatchExecutor(translator, polisher=None)
-    terms = (
-        GlossaryTerm(source="齊天大聖孫悟空", target="Great Sage Sun Wukong", type="person"),
-        GlossaryTerm(source="行者", target="Pilgrim", type="person"),
-    )
-    plan = BatchPlan(
-        chapter=0,
-        start_index=0,
-        segment_indices=(0, 1, 2),
-        sources=("齊天大聖孫悟空說。", "行者說道。", "行者大笑。"),
-        terms=terms,
-        context="",
-        style="",
-        book_synopsis="",
-        chapter_digest="",
-        annotation_contexts=[
-            [
-                {
-                    "target_key": "obj1",
-                    "source": "[figure 1]",
-                    "marker": "〘object:obj1〙",
-                    "source_offset": "9",
-                }
-            ],
-            [
-                {
-                    "target_key": "obj2",
-                    "source": "[figure 2]",
-                    "marker": "〘object:obj2〙",
-                    "source_offset": "2",
-                }
-            ],
-            [],
-        ],
-        next_source="",
-        entity_markers=True,
-    )
-    draft = executor.translate(plan)
-    assert draft.targets == (
-        "Great Sage Sun Wukong spoke. 〘object:obj1〙",
-        "Pilgrim 〘object:obj2〙 spoke.",
-        "Pilgrim laughed.",
-    )
-    # Protected-object segments kept exact source offsets while the plain segment was masked.
-    assert "齊天大聖孫悟空說。〘object:obj1〙" in seen_prompts[0]
-    assert "行者〘object:obj2〙說道。" in seen_prompts[0]
-    assert "⟦N0⟧大笑。" in seen_prompts[0]
-
-
 def test_chapter_hygiene_preserves_offset_bound_annotation_and_docx_style_segments(
     tmp_path: Path,
 ):
@@ -1835,42 +1631,6 @@ def test_sparse_editor_returns_failed_on_context_window_overflow(monkeypatch):
     res = editor.edit_batch(["原文。"], ["Draft text."])
     assert res.failed is True
     assert res.targets == ("Draft text.",)
-
-
-def test_entity_markers_plain_retry_rejects_residual_marker_brackets():
-    import pytest
-    from wenyi_core.agents.translator import Translator
-    from wenyi_core.pipeline.translate.translation_batch import BatchPlan, TranslationBatchExecutor
-
-    calls = 0
-
-    def handler(messages, tier, json_mode):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return json.dumps(["He laughed."])  # drops ⟦N0⟧, triggering plain retry
-        return json.dumps(["⟦N99⟧ laughed."])  # residual unknown marker on plain retry
-
-    cfg = Config()
-    cfg.pipeline.entity_markers = True
-    translator = Translator(FakeClient(handler=handler), cfg)
-    executor = TranslationBatchExecutor(translator, polisher=None)
-    plan = BatchPlan(
-        chapter=0,
-        start_index=0,
-        segment_indices=(0,),
-        sources=("行者大笑。",),
-        terms=(GlossaryTerm(source="行者", target="Pilgrim", type="person"),),
-        context="",
-        style="",
-        book_synopsis="",
-        chapter_digest="",
-        annotation_contexts=[[]],
-        next_source="",
-        entity_markers=True,
-    )
-    with pytest.raises(ValueError, match="residual marker"):
-        executor.translate(plan)
 
 
 def test_book_bible_keeps_adjudicated_gender_when_scenes_mix_pronouns():
