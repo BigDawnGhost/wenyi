@@ -43,7 +43,7 @@ def ingest_config(config: Config) -> dict[str, Any]:
 
 
 # Matches "epub_schema" written by the native EPUB reader (rust/src/epub/ingest.rs).
-EPUB_INGEST_SCHEMA = 6
+EPUB_INGEST_SCHEMA = 7
 
 
 def load_parsed_document(

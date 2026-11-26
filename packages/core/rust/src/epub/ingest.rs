@@ -827,7 +827,7 @@ pub fn ingest(path: &Path, source_lang: &str, target_lang: &str) -> Result<Vec<u
             push(title, href, chunk, e.map(|e| e.entry_id.as_str()));
         }
     }
-    let mut meta = json!({"epub_schema": 6, "epub_objects": 1, "opf_path": package.opf, "toc_paths": package.toc_paths,
+    let mut meta = json!({"epub_schema": 7, "epub_objects": 1, "opf_path": package.opf, "toc_paths": package.toc_paths,
         "toc_entries": toc, "epub_resources": &specs[..spine], "epub_split_strategy": strategy,
         "epub_split_toc_path": canonical, "epub_annotation_contexts": contexts});
     if let Some(obj) = meta.as_object_mut() {

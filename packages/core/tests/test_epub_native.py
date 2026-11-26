@@ -439,3 +439,155 @@ def test_export_creates_missing_language_in_empty_metadata(tmp_path):
     ns = {"opf": "http://www.idpf.org/2007/opf", "dc": "http://purl.org/dc/elements/1.1/"}
     assert opf.findtext("opf:metadata/dc:language", namespaces=ns) == "zh-Hans"
     assert opf.find("opf:metadata/dc:title", ns) is None
+
+
+BARE_BODY_WEBNOVEL = (
+    '<?xml version="1.0" encoding="utf-8"?>'
+    '<html xmlns="http://www.w3.org/1999/xhtml">'
+    "<head><title>Chapter 1</title><style>body { color: #111; }</style></head>"
+    "<body>"
+    '<h1 class="hide720">第一章 陨石</h1>'
+    "　　第一段正文。<br/><br/>"
+    '　　第二段带有<em>强调</em>和<a id="n1"></a>锚点。<br/>'
+    "　　第三段结尾。"
+    "</body></html>"
+)
+
+MIXED_LOOSE_AND_BOUNDARIES = (
+    '<?xml version="1.0" encoding="utf-8"?>'
+    '<html xmlns="http://www.w3.org/1999/xhtml">'
+    "<head><title>Mixed</title></head>"
+    "<body>"
+    "<script>var ignored = 'do not translate';</script>"
+    '<svg xmlns="http://www.w3.org/2000/svg"><text>Cover SVG</text></svg>'
+    '<div class="wrap">'
+    "<p>Block paragraph</p>"
+    "Loose in div line 1<br/>"
+    'Loose with <img src="icon.png"/> inline<br/>'
+    "</div>"
+    "<section>"
+    "Section loose line<br/>"
+    "<span><section>Nested section line</section></span>"
+    "</section>"
+    "<pre>raw code block</pre>"
+    "</body></html>"
+)
+
+
+def test_bare_body_br_epub_ingest_matches_python_and_bumps_schema(tmp_path, monkeypatch):
+    raw = BARE_BODY_WEBNOVEL.encode("utf-8")
+    _, legacy = _legacy_resource(raw, monkeypatch)
+    document = _book(tmp_path / "bare.epub", raw)
+
+    assert document.meta["epub_schema"] == 7
+    segments = document.chapters[0].segments
+    assert [s.source for s in segments] == [
+        "第一章 陨石",
+        "第一段正文。",
+        "第二段带有强调和锚点。",
+        "第三段结尾。",
+    ]
+    assert [s.kind for s in segments] == ["heading", "text", "text", "text"]
+    assert segments == legacy
+
+
+def test_mixed_loose_text_containers_and_non_prose_boundaries(tmp_path, monkeypatch):
+    raw = MIXED_LOOSE_AND_BOUNDARIES.encode("utf-8")
+    _, legacy = _legacy_resource(raw, monkeypatch)
+    document = _book(tmp_path / "mixed.epub", raw)
+
+    segments = document.chapters[0].segments
+    assert [s.source for s in segments] == [
+        "Block paragraph",
+        "Loose in div line 1",
+        "Loose with inline",
+        "Section loose line",
+        "Nested section line",
+    ]
+    assert segments == legacy
+
+
+@pytest.mark.parametrize(
+    ("bilingual", "order"),
+    [
+        (False, "target_first"),
+        (True, "target_first"),
+        (True, "source_first"),
+    ],
+    ids=["mono", "bilingual-target-first", "bilingual-source-first"],
+)
+def test_bare_body_br_epub_roundtrip_export(tmp_path, bilingual, order):
+    source = tmp_path / "bare.epub"
+    output = tmp_path / f"out-{bilingual}-{order}.epub"
+    _write_book(source, BARE_BODY_WEBNOVEL.encode("utf-8"))
+
+    document = read_epub(source, "zh", "en")
+    translations = [
+        "Chapter 1: The Meteorite",
+        "First body paragraph.",
+        "Second paragraph with emphasis and anchor.",
+        "Third closing paragraph.",
+    ]
+    for seg, target in zip(document.chapters[0].segments, translations, strict=True):
+        seg.target = target
+
+    with closing(FileStorage(str(tmp_path / "state"))) as store:
+        store.init_from_document(document)
+        store.set_chapter_status(0, "done")
+        assemble(
+            store,
+            str(source),
+            str(output),
+            "epub",
+            bilingual=bilingual,
+            order=order,
+            about_page=False,
+        )
+
+    with ZipFile(output) as archive:
+        assert archive.testzip() is None
+        exported_xhtml = archive.read("content.xhtml").decode("utf-8")
+
+    # Exported XHTML must remain well-formed XML with no leaked temporary attributes.
+    ET.fromstring(exported_xhtml)
+    soup = BeautifulSoup(exported_xhtml, "xml")
+    assert soup.select("[data-tn-line], [data-tn-id], [data-tn-inline-id]") == []
+    body = soup.find("body")
+    assert body is not None
+    assert body.find("h1").get_text(strip=True) == "Chapter 1: The Meteorite"
+    assert len(body.find_all("br")) >= 3
+    body_text = body.get_text(" ", strip=True)
+    for translated in translations:
+        assert translated in body_text
+    if bilingual:
+        source_spans = body.select("span.tn-source")
+        assert len(source_spans) == 3
+        first_src_pos = exported_xhtml.index("第一段正文。")
+        first_tgt_pos = exported_xhtml.index("First body paragraph.")
+        if order == "source_first":
+            assert first_src_pos < first_tgt_pos
+        else:
+            assert first_tgt_pos < first_src_pos
+    else:
+        assert "第一段正文。" not in body_text
+
+
+def test_bare_body_br_html_export(tmp_path):
+    source = tmp_path / "bare.epub"
+    output = tmp_path / "out.html"
+    _write_book(source, BARE_BODY_WEBNOVEL.encode("utf-8"))
+
+    document = read_epub(source, "zh", "en")
+    for idx, seg in enumerate(document.chapters[0].segments):
+        seg.target = f"Translated {idx}"
+
+    with closing(FileStorage(str(tmp_path / "state"))) as store:
+        store.init_from_document(document)
+        store.set_chapter_status(0, "done")
+        assemble(store, str(source), str(output), "html", bilingual=True, about_page=False)
+
+    rendered = output.read_text(encoding="utf-8")
+    assert "data-tn-line" not in rendered
+    assert "Translated 0" in rendered
+    assert "Translated 3" in rendered
+    assert "第一段正文。" in rendered

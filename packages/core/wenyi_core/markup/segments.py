@@ -374,31 +374,175 @@ def _split_direct_break_lines(element: Tag, soup: BeautifulSoup) -> list[Tag]:
     return targets
 
 
+_LOOSE_TEXT_CONTAINERS = frozenset(
+    {"body", "div", "section", "article", "main", "aside", "blockquote", "dd"}
+)
+_NON_PROSE_TAGS = frozenset(
+    {"head", "script", "style", "noscript", "template", "title", "meta", "link"}
+)
+_STRUCTURAL_BOUNDARY_TAGS = frozenset(
+    {
+        "section",
+        "article",
+        "main",
+        "aside",
+        "header",
+        "footer",
+        "nav",
+        "ul",
+        "ol",
+        "dl",
+        "table",
+        "thead",
+        "tbody",
+        "tfoot",
+        "tr",
+        "figure",
+        "hr",
+        "pre",
+        "form",
+        "details",
+        "summary",
+        "address",
+        "fieldset",
+    }
+)
+_BOUNDARY_AND_CANDIDATE_TAGS = _BLOCK_CANDIDATE_TAGS | _STRUCTURAL_BOUNDARY_TAGS
+
+
+def _node_has_prose(node: Tag | NavigableString) -> bool:
+    if isinstance(node, Tag):
+        if (
+            node.name in _ATOMIC_INLINE_TAGS
+            or node.name in _NON_PROSE_TAGS
+            or node.name in {"rt", "rp"}
+        ):
+            return False
+        return any(
+            _node_has_prose(child)
+            for child in node.children
+            if isinstance(child, Tag) or _is_text_string(child)
+        )
+    return _is_text_string(node) and bool(str(node).strip())
+
+
+def _flush_loose_run(
+    run: list[Tag | NavigableString],
+    soup: BeautifulSoup,
+    targets: list[Tag],
+) -> None:
+    if not run:
+        return
+    if any(_node_has_prose(node) for node in run):
+        wrapper = soup.new_tag("span")
+        wrapper[LINE_WRAPPER_ATTR] = "true"
+        run[0].insert_before(wrapper)
+        for node in run:
+            wrapper.append(node.extract())
+        targets.append(wrapper)
+    run.clear()
+
+
+def _collect_targets(
+    node: Tag | BeautifulSoup,
+    soup: BeautifulSoup,
+    *,
+    skip_navigation: bool,
+    in_nav: bool,
+    in_nav_li: bool,
+    targets: list[Tag],
+) -> None:
+    name = node.name if isinstance(node, Tag) else ""
+    if name in _NON_PROSE_TAGS:
+        return
+    if name == "nav":
+        next_nav, next_nav_li = True, False
+    elif in_nav and name == "li":
+        next_nav, next_nav_li = True, True
+    else:
+        next_nav, next_nav_li = in_nav, in_nav_li
+    excluded = skip_navigation and next_nav_li
+
+    if isinstance(node, Tag) and name in _BLOCK_CANDIDATE_TAGS:
+        has_descendant_block = _has_meaningful_descendant_block(node)
+        if name == "li":
+            link = _list_item_link_target(node)
+            if link is not None:
+                if not excluded:
+                    targets.extend(_split_direct_break_lines(link, soup))
+                for child in list(node.children):
+                    if child is not link and isinstance(child, Tag):
+                        _collect_targets(
+                            child,
+                            soup,
+                            skip_navigation=skip_navigation,
+                            in_nav=next_nav,
+                            in_nav_li=next_nav_li,
+                            targets=targets,
+                        )
+                return
+        if not has_descendant_block:
+            if not excluded:
+                targets.extend(_split_direct_break_lines(node, soup))
+            return
+
+    children = list(node.children)
+    if not excluded and name in _LOOSE_TEXT_CONTAINERS:
+        run: list[Tag | NavigableString] = []
+        for child in children:
+            if isinstance(child, Tag):
+                if child.name == "br" or child.name in _NON_PROSE_TAGS:
+                    _flush_loose_run(run, soup, targets)
+                elif (
+                    child.name in _BOUNDARY_AND_CANDIDATE_TAGS
+                    or child.find(_BOUNDARY_AND_CANDIDATE_TAGS) is not None
+                ):
+                    _flush_loose_run(run, soup, targets)
+                    _collect_targets(
+                        child,
+                        soup,
+                        skip_navigation=skip_navigation,
+                        in_nav=next_nav,
+                        in_nav_li=next_nav_li,
+                        targets=targets,
+                    )
+                else:
+                    run.append(child)
+            elif _is_text_string(child):
+                run.append(child)
+        _flush_loose_run(run, soup, targets)
+        return
+
+    for child in children:
+        if isinstance(child, Tag):
+            _collect_targets(
+                child,
+                soup,
+                skip_navigation=skip_navigation,
+                in_nav=next_nav,
+                in_nav_li=next_nav_li,
+                targets=targets,
+            )
+
+
 def _translation_targets(
     soup: BeautifulSoup,
     *,
     skip_navigation: bool,
 ) -> list[Tag]:
     """Select the finest safely replaceable EPUB nodes in document order.
-    Keep div/blockquote elements with child body blocks as containers. Direct link text
-    inside li becomes its own target, preserving list hierarchy and href.
+    Keep div/blockquote elements with child body blocks as containers, while extracting
+    loose inline/br-separated prose runs directly inside body or block containers.
     """
     targets: list[Tag] = []
-    for element in soup.find_all(_BLOCK_CANDIDATE_TAGS):
-        if skip_navigation and _inside_navigation_list(element):
-            continue
-
-        has_descendant_block = _has_meaningful_descendant_block(element)
-        if element.name == "li":
-            link = _list_item_link_target(element)
-            if link is not None:
-                targets.extend(_split_direct_break_lines(link, soup))
-            if link is not None or has_descendant_block:
-                continue
-
-        if has_descendant_block:
-            continue
-        targets.extend(_split_direct_break_lines(element, soup))
+    _collect_targets(
+        soup,
+        soup,
+        skip_navigation=skip_navigation,
+        in_nav=False,
+        in_nav_li=False,
+        targets=targets,
+    )
     return targets
 
 
@@ -568,22 +712,3 @@ def annotate_resource_dom(
             title = candidate
 
     return title, segments
-
-
-def _inside_navigation_list(element: Tag) -> bool:
-    """Check whether a block belongs to an EPUB3 nav TOC list.
-    Protect li elements and their internal blocks from backfill that would erase links or
-    nested ol elements. Visible headings or descriptions elsewhere inside nav still need
-    translation.
-    """
-    inside_nav = False
-    inside_list_item = element.name == "li"
-    for parent in element.parents:
-        if not isinstance(parent, Tag):
-            continue
-        if parent.name == "li":
-            inside_list_item = True
-        elif parent.name == "nav":
-            inside_nav = True
-            break
-    return inside_nav and inside_list_item
