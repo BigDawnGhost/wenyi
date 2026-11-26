@@ -148,6 +148,8 @@ const en = {
   "events.glossaryBibleCompiled":
     "Book Bible compiled ({seeded} terms, {quotes} quotes)",
   "events.glossaryBibleReused": "Book Bible reused ({seeded} terms)",
+  "events.glossaryBibleCheckpointReused":
+    "Resumed Book Bible compilation from its checkpoint ({seeded} terms)",
   "events.consistencySweepCompleted":
     "Consistency sweep completed ({glossary} glossary, {drift} drift fixes)",
   "events.noEventsYet": "No events yet.",

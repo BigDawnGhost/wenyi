@@ -42,6 +42,10 @@ function badgeFor(type: string) {
       variant: "secondary",
       label: tr("common.terms"),
     },
+    glossary_bible_checkpoint_reused: {
+      variant: "secondary",
+      label: tr("common.terms"),
+    },
     consistency_sweep_completed: {
       variant: "info",
       label: tr("events.translation"),
@@ -104,6 +108,10 @@ function describe(e: EventOut): string {
       });
     case "glossary_bible_reused":
       return tr("events.glossaryBibleReused", {
+        seeded: p.seeded ?? 0,
+      });
+    case "glossary_bible_checkpoint_reused":
+      return tr("events.glossaryBibleCheckpointReused", {
         seeded: p.seeded ?? 0,
       });
     case "consistency_sweep_completed":

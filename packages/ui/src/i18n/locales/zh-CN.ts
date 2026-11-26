@@ -146,6 +146,7 @@ const zhCN = {
   "events.glossaryBibleCompiled":
     "全书术语词典已编译（{seeded} 条术语，{quotes} 条重复引文）",
   "events.glossaryBibleReused": "已复用全书术语词典（{seeded} 条术语）",
+  "events.glossaryBibleCheckpointReused": "已从检查点继续编译全书术语词典（{seeded} 条术语）",
   "events.consistencySweepCompleted":
     "全书一致性巡检完成（补齐术语 {glossary} 处，修正漂移 {drift} 处）",
   "events.noEventsYet": "暂无事件。",

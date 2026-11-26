@@ -268,6 +268,7 @@ class TranslationService:
                 style=style,
                 repeated_quotes=repeated_quotes,
                 progress=progress,
+                checkpoint_usage=lambda: self._runtime.usage.flush(store, scope="bible"),
             )
             if self._bible_seed.last_conventions:
                 conv_lines = "\n".join(f"- {c}" for c in self._bible_seed.last_conventions)
