@@ -12,14 +12,11 @@ from wenyi_core.alignment.objects import object_marker
 from wenyi_core.markup import _epub_native
 from wenyi_core.markup.annotations import (
     _ANNOTATION_MARKER_ONLY,
-    _BACKLINK_SEMANTICS,
-    _NOTEREF_SEMANTICS,
     _annotation_roots,
     _hoist_processing_instructions,
     _is_internal_link,
     _is_text_string,
     _range_marker_node,
-    _semantic_tokens,
 )
 from wenyi_core.markup.contracts import (
     _ATOMIC_INLINE_TAGS,
@@ -464,10 +461,7 @@ _ASCII_WS = " \t\n\r\x0b\x0c"
 
 
 def _is_note_link(link: Tag) -> bool:
-    return _is_internal_link(link) and (
-        bool(_semantic_tokens(link) & (_NOTEREF_SEMANTICS | _BACKLINK_SEMANTICS))
-        or _range_marker_node(link) is not None
-    )
+    return _is_internal_link(link) and _range_marker_node(link) is not None
 
 
 def _compute_flags(root: Tag | BeautifulSoup) -> dict[int, int]:

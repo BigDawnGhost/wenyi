@@ -46,7 +46,10 @@ def _is_internal_link(link: Tag) -> bool:
     raw_href = link.get("href")
     if not isinstance(raw_href, str) or not raw_href.strip():
         return False
-    parsed = urlsplit(raw_href.strip())
+    try:
+        parsed = urlsplit(raw_href.strip())
+    except ValueError:
+        return False
     return not parsed.scheme and not parsed.netloc
 
 

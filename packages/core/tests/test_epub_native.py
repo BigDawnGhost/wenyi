@@ -786,6 +786,14 @@ def test_legacy_schema_export_and_object_refresh_do_not_shift_anchors(
             ["Einstein", "E = mc2"],
         ),
         (
+            '<ul><li><a epub:type="noteref" href="#fn1">First<br/>Second</a></li></ul>',
+            ["First", "Second"],
+        ),
+        (
+            '<template><a href="http://[invalid">bad</a></template><p>OK</p>',
+            ["OK"],
+        ),
+        (
             '<a href="https://example.com">First<br/>Second</a>',
             ["First", "Second"],
         ),
@@ -892,6 +900,8 @@ def test_legacy_schema_export_and_object_refresh_do_not_shift_anchors(
         "li-link-empty-block-id",
         "li-link-nested-span-br",
         "li-link-formula-sup-br",
+        "li-link-noteref-no-sup-br",
+        "template-invalid-url",
         "external-link-br",
         "split-inline-boundary-spaces",
         "split-inline-inner-boundary-spaces",
@@ -972,6 +982,12 @@ def test_schema7_edge_cases_rust_python_parity_and_export(body, expected, tmp_pa
                     == '<ul><li><a href="chapter2.xhtml">Einstein<br/>E = mc<sup>2</sup></a></li></ul>'
                 ):
                     assert "<br" in xhtml and "chapter2.xhtml" in xhtml
+                if (
+                    body
+                    == '<ul><li><a epub:type="noteref" href="#fn1">First<br/>Second</a></li></ul>'
+                    and not bilingual
+                ):
+                    assert "T0<br/>T1" in xhtml
                 if body == '<a href="https://example.com">First<br/>Second</a>' and not bilingual:
                     assert '<a href="https://example.com">T0<br/>T1</a>' in xhtml
                 if body == "<div>A<?pagebreak 5?>B<br/>C</div>" and not bilingual:

@@ -160,12 +160,7 @@ fn trailing_note_marker(dom: &Dom, link: Id) -> Option<Id> {
 }
 
 fn is_note_link(dom: &Dom, link: Id) -> bool {
-    is_internal_href(dom, link)
-        && (semantic(
-            dom,
-            link,
-            &["noteref", "doc-noteref", "backlink", "doc-backlink"],
-        ) || trailing_note_marker(dom, link).is_some())
+    is_internal_href(dom, link) && trailing_note_marker(dom, link).is_some()
 }
 
 fn compute_flags(dom: &Dom) -> Vec<u8> {
