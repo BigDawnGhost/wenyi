@@ -503,6 +503,7 @@ def test_mixed_loose_text_containers_and_non_prose_boundaries(tmp_path, monkeypa
         "Loose with inline",
         "Section loose line",
         "Nested section line",
+        "raw code block",
     ]
     assert segments == legacy
 
@@ -660,7 +661,7 @@ def test_bare_body_br_html_export(tmp_path, order):
         assert tgt_pos < src_pos
 
 
-@pytest.mark.parametrize("legacy_schema", [5, 6, None])
+@pytest.mark.parametrize("legacy_schema", [5, 6, None, -1])
 @pytest.mark.parametrize("out_format", ["epub", "html"])
 def test_legacy_schema_export_and_object_refresh_do_not_shift_anchors(
     tmp_path, monkeypatch, legacy_schema, out_format
@@ -727,6 +728,66 @@ def test_legacy_schema_export_and_object_refresh_do_not_shift_anchors(
         ),
         (
             "<div><pre>code line</pre></div>",
+            ["code line"],
+        ),
+        (
+            '<div class="chapter"><header>第一章</header>正文一<br/>正文二</div>',
+            ["第一章", "正文一", "正文二"],
+        ),
+        (
+            "<blockquote>Quote text<footer>— Author</footer></blockquote>",
+            ["Quote text", "— Author"],
+        ),
+        (
+            '<div>Intro<figure>Caption only text<img src="c.png"/></figure></div>',
+            ["Intro", "Caption only text"],
+        ),
+        (
+            "<div><details><summary>Sum</summary>Detail body</details></div>",
+            ["Sum", "Detail body"],
+        ),
+        (
+            "<div>A<address>Addr</address></div>",
+            ["A", "Addr"],
+        ),
+        (
+            "<div><span>A<br/>B</span></div>",
+            ["A", "B"],
+        ),
+        (
+            "<div><span>A<script>window.x=1;</script>B</span></div>",
+            ["A", "B"],
+        ),
+        (
+            "<div>Hello<template>Hidden</template>World</div>",
+            ["Hello", "World"],
+        ),
+        (
+            '<a href="#target"><span id="inner">First</span><br/>Second</a>',
+            ["First", "Second"],
+        ),
+        (
+            '<ul><li><a href="#target"><p id="target"/>Line</a></li></ul>',
+            ["Line"],
+        ),
+        (
+            "A <span>B<br/>C</span> D<br/>E",
+            ["A", "B", "C", "D", "E"],
+        ),
+        (
+            "<p><template><p>Hidden</p></template>Visible text</p>",
+            ["Visible text"],
+        ),
+        (
+            "<p><noscript><div>No JS</div></noscript>Visible text</p>",
+            ["Visible text"],
+        ),
+        (
+            '<p><svg xmlns="http://www.w3.org/2000/svg"><foreignObject><p>SVG</p></foreignObject></svg>Visible text</p>',
+            ["Visible text"],
+        ),
+        (
+            '<figure><svg xmlns="http://www.w3.org/2000/svg"><foreignObject><p>SVG</p></foreignObject></svg></figure>',
             [],
         ),
         (
@@ -782,6 +843,21 @@ def test_legacy_schema_export_and_object_refresh_do_not_shift_anchors(
     ids=[
         "div-with-section",
         "div-with-pre",
+        "div-with-header",
+        "blockquote-with-footer",
+        "div-with-figure",
+        "div-with-details-summary",
+        "div-with-address",
+        "div-inline-br",
+        "div-inline-script",
+        "div-direct-template",
+        "link-split-inner-id",
+        "li-link-empty-block-id",
+        "split-inline-boundary-spaces",
+        "p-with-template-block",
+        "p-with-noscript-block",
+        "p-with-svg-foreignobject",
+        "figure-with-svg-foreignobject",
         "div-with-hr",
         "inline-with-template",
         "inline-with-script",
@@ -822,16 +898,23 @@ def test_schema7_edge_cases_rust_python_parity_and_export(body, expected, tmp_pa
                     xhtml = zf.read("content.xhtml").decode("utf-8")
                 assert "data-tn-line" not in xhtml
                 if "<template>" in body:
-                    assert "<template>Hidden</template>" in xhtml
+                    assert "<template>" in xhtml
                 if "<script>" in body:
-                    assert "<script>var x=1;</script>" in xhtml
+                    assert "<script>" in xhtml
                 if "<section>" in body:
                     assert "<section>" in xhtml
-                if 'id="target"' in body:
+                if "<pre>" in body:
+                    assert "<pre>" in xhtml
+                if 'id="target"' in body or 'id="inner"' in body:
                     soup = BeautifulSoup(xhtml, "xml")
-                    assert soup.find(id="target") is not None
-                    # Must not create nested <a> tags inside <a href="#target">.
+                    if 'id="target"' in body:
+                        assert soup.find(id="target") is not None
+                    if 'id="inner"' in body:
+                        assert soup.find(id="inner") is not None
+                    # Must not create nested <a> tags inside an outer <a href="#target">.
                     assert all(a.find("a") is None for a in soup.find_all("a"))
+                if body == "A <span>B<br/>C</span> D<br/>E" and not bilingual:
+                    assert "T0 <span>T1<br/>T2</span> T3<br/>T4" in xhtml
 
 
 def test_skip_navigation_excludes_loose_text_inside_nav_li(tmp_path):
@@ -865,8 +948,8 @@ def test_deeply_nested_spans_do_not_overflow_stack(tmp_path):
     document = _book(tmp_path / "deep.epub", markup.encode("utf-8"))
     assert [s.source for s in document.chapters[0].segments] == ["Deep bare text"]
 
-    # Also verify Python's iterative target selection handles deep nesting without RecursionError.
-    from wenyi_core.markup.segments import _schema7_translation_targets
+    # Also verify Python's full annotation path handles deep nesting without RecursionError.
+    from wenyi_core.markup.segments import annotate_resource_dom
 
     soup = BeautifulSoup("<html><body></body></html>", "html.parser")
     parent = soup.body
@@ -875,5 +958,5 @@ def test_deeply_nested_spans_do_not_overflow_stack(tmp_path):
         parent.append(span)
         parent = span
     parent.append("Deep python bare text")
-    targets = _schema7_translation_targets(soup, skip_navigation=False)
-    assert [t.get_text(strip=True) for t in targets] == ["Deep python bare text"]
+    _, py_segments = annotate_resource_dom(soup, 0, "deep.xhtml")
+    assert [s.source for s in py_segments] == ["Deep python bare text"]

@@ -181,7 +181,7 @@ def options(
             "about": about,
             "package_path": package_path if isinstance(package_path, str) else None,
             "resource_titles": resource_titles,
-            "epub_schema": epub_schema if type(epub_schema) is int else None,
+            "epub_schema": (epub_schema if type(epub_schema) is int and epub_schema >= 0 else None),
             "presentation": (
                 {
                     "lang": target_lang,

@@ -321,6 +321,38 @@ impl Dom {
         }
     }
 
+    pub fn take_children(&mut self, id: Id) -> Vec<Id> {
+        let children = std::mem::take(&mut self.0[id].children);
+        for &child in &children {
+            self.0[child].parent = None;
+        }
+        children
+    }
+
+    pub fn set_children(&mut self, parent: Id, children: Vec<Id>) {
+        for &child in &children {
+            self.0[child].parent = Some(parent);
+        }
+        self.0[parent].children = children;
+    }
+
+    pub fn wrap_detached(&mut self, name: &str, attr: (&str, &str), children: Vec<Id>) -> Id {
+        let span = self.tag(name);
+        self.set(span, attr.0, attr.1);
+        for &child in &children {
+            self.0[child].parent = Some(span);
+        }
+        self.0[span].children = children;
+        span
+    }
+
+    pub fn text_mut(&mut self, id: Id) -> Option<&mut String> {
+        match &mut self.0[id].kind {
+            Kind::Text(text) => Some(text),
+            _ => None,
+        }
+    }
+
     pub fn unwrap(&mut self, id: Id) {
         for child in self.children(id).to_vec() {
             self.insert(id, child, false);

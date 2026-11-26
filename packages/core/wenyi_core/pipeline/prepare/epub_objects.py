@@ -32,7 +32,9 @@ def refresh_epub_objects(
     if meta.get("epub_objects") == OBJECT_SCHEMA_VERSION:
         return
     saved_schema = meta.get("epub_schema")
-    schema = saved_schema if type(saved_schema) is int else 6
+    schema = saved_schema if type(saved_schema) is int and saved_schema >= 0 else 6
+    if document is not None and document.meta.get("epub_schema") != schema:
+        document = None
     document = document or read_epub(
         epub_path,
         manifest["source_lang"],

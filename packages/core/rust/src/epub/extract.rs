@@ -52,7 +52,23 @@ fn candidate(name: &str) -> bool {
 fn loose_text_container(name: &str) -> bool {
     matches!(
         name,
-        "body" | "div" | "section" | "article" | "main" | "aside" | "blockquote" | "dd"
+        "body"
+            | "div"
+            | "section"
+            | "article"
+            | "main"
+            | "aside"
+            | "blockquote"
+            | "dd"
+            | "header"
+            | "footer"
+            | "figure"
+            | "details"
+            | "summary"
+            | "address"
+            | "pre"
+            | "form"
+            | "fieldset"
     )
 }
 fn non_prose(name: &str) -> bool {
@@ -114,8 +130,13 @@ fn atomic(name: &str) -> bool {
 const F_TEXT: u8 = 1 << 0;
 const F_PROSE: u8 = 1 << 1;
 const F_DESC_CANDIDATE: u8 = 1 << 2;
-const F_DESC_BOUNDARY: u8 = 1 << 3;
+const F_DESC_ANY_BLOCK: u8 = 1 << 3;
 const F_DESC_SPLIT: u8 = 1 << 4;
+const F_DESC_NON_PROSE: u8 = 1 << 5;
+
+fn is_ascii_ws(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c')
+}
 
 fn compute_flags(dom: &Dom) -> Vec<u8> {
     let mut flags = vec![0u8; dom.len()];
@@ -151,13 +172,18 @@ fn compute_flags(dom: &Dom) -> Vec<u8> {
             }
             if let Kind::Tag(cname, _) = dom.kind(child) {
                 let cname = cname.as_str();
-                if (candidate(cname) && cf & F_TEXT != 0) || cf & F_DESC_CANDIDATE != 0 {
+                if !atomic(cname)
+                    && !non_prose(cname)
+                    && ((candidate(cname) && cf & F_TEXT != 0) || cf & F_DESC_CANDIDATE != 0)
+                {
                     f |= F_DESC_CANDIDATE;
                 }
-                if structural_boundary(cname)
-                    || (!atomic(cname) && !non_prose(cname) && cf & F_DESC_BOUNDARY != 0)
+                if candidate(cname)
+                    || structural_boundary(cname)
+                    || non_prose(cname)
+                    || (!atomic(cname) && cf & F_DESC_ANY_BLOCK != 0)
                 {
-                    f |= F_DESC_BOUNDARY;
+                    f |= F_DESC_ANY_BLOCK;
                 }
                 if candidate(cname)
                     || structural_boundary(cname)
@@ -166,6 +192,9 @@ fn compute_flags(dom: &Dom) -> Vec<u8> {
                     || (!atomic(cname) && cf & F_DESC_SPLIT != 0)
                 {
                     f |= F_DESC_SPLIT;
+                }
+                if non_prose(cname) || (!atomic(cname) && cf & F_DESC_NON_PROSE != 0) {
+                    f |= F_DESC_NON_PROSE;
                 }
             }
         }
@@ -246,13 +275,36 @@ fn legacy_targets(dom: &mut Dom, skip_nav: bool) -> Vec<Id> {
 }
 
 enum Work {
-    LooseRun(Vec<Id>),
+    EmitTarget(Id),
     Visit {
         id: Id,
         in_nav: bool,
         in_nav_li: bool,
         loose_inline: bool,
     },
+}
+
+fn trim_inline_boundary_space(dom: &mut Dom, id: Id, leading: bool) -> Option<String> {
+    let text = dom.text_mut(id)?;
+    let trimmed = if leading {
+        text.trim_start_matches(is_ascii_ws)
+    } else {
+        text.trim_end_matches(is_ascii_ws)
+    };
+    let ws_len = text.len() - trimmed.len();
+    if ws_len == 0 {
+        return None;
+    }
+    if leading {
+        let ws = text[..ws_len].to_owned();
+        text.drain(..ws_len);
+        Some(ws)
+    } else {
+        let split_at = text.len() - ws_len;
+        let ws = text[split_at..].to_owned();
+        text.truncate(split_at);
+        Some(ws)
+    }
 }
 
 fn schema7_targets(dom: &mut Dom, skip_nav: bool) -> Vec<Id> {
@@ -266,17 +318,7 @@ fn schema7_targets(dom: &mut Dom, skip_nav: bool) -> Vec<Id> {
     }];
     while let Some(work) = stack.pop() {
         match work {
-            Work::LooseRun(run) => {
-                if let Some(&first) = run.first() {
-                    let span = dom.tag("span");
-                    dom.set(span, LINE, "true");
-                    dom.insert(first, span, false);
-                    for id in run {
-                        dom.append(span, id);
-                    }
-                    out.push(span);
-                }
-            }
+            Work::EmitTarget(span) => out.push(span),
             Work::Visit {
                 id,
                 in_nav,
@@ -284,7 +326,7 @@ fn schema7_targets(dom: &mut Dom, skip_nav: bool) -> Vec<Id> {
                 loose_inline,
             } => {
                 let name = dom.name(id).to_owned();
-                if !name.is_empty() && non_prose(&name) {
+                if !name.is_empty() && (non_prose(&name) || atomic(&name)) {
                     continue;
                 }
                 let (next_nav, next_nav_li) = if name == "nav" {
@@ -298,15 +340,11 @@ fn schema7_targets(dom: &mut Dom, skip_nav: bool) -> Vec<Id> {
                 let node_flags = flags[id];
 
                 if !name.is_empty() && candidate(&name) {
-                    let descendant_block = (node_flags & F_DESC_CANDIDATE != 0)
-                        || (loose_text_container(&name) && node_flags & F_DESC_BOUNDARY != 0);
                     let link = (name == "li")
                         .then(|| dom.direct(id, "a"))
                         .flatten()
                         .filter(|&link| {
-                            let lf = flags[link];
-                            lf & F_TEXT != 0
-                                && lf & (F_DESC_CANDIDATE | F_DESC_BOUNDARY) == 0
+                            flags[link] & F_TEXT != 0
                                 && dom.children(id).iter().all(|&child| {
                                     child == link
                                         || candidate(dom.name(child))
@@ -315,11 +353,21 @@ fn schema7_targets(dom: &mut Dom, skip_nav: bool) -> Vec<Id> {
                                 })
                         });
                     if let Some(link_id) = link {
-                        if !excluded {
+                        let split_link = flags[link_id] & F_DESC_ANY_BLOCK != 0;
+                        if !split_link && !excluded {
                             push_break_lines(dom, link_id, &mut out);
                         }
                         for &child in dom.children(id).iter().rev() {
-                            if child != link_id && matches!(dom.kind(child), Kind::Tag(..)) {
+                            if child == link_id {
+                                if split_link {
+                                    stack.push(Work::Visit {
+                                        id: link_id,
+                                        in_nav: next_nav,
+                                        in_nav_li: next_nav_li,
+                                        loose_inline: !excluded,
+                                    });
+                                }
+                            } else if matches!(dom.kind(child), Kind::Tag(..)) {
                                 stack.push(Work::Visit {
                                     id: child,
                                     in_nav: next_nav,
@@ -330,7 +378,10 @@ fn schema7_targets(dom: &mut Dom, skip_nav: bool) -> Vec<Id> {
                         }
                         continue;
                     }
-                    if !descendant_block {
+                    let descend = (node_flags & F_DESC_CANDIDATE != 0)
+                        || (node_flags & F_DESC_NON_PROSE != 0)
+                        || (loose_text_container(&name) && node_flags & F_DESC_SPLIT != 0);
+                    if !descend {
                         if !excluded {
                             push_break_lines(dom, id, &mut out);
                         }
@@ -338,50 +389,122 @@ fn schema7_targets(dom: &mut Dom, skip_nav: bool) -> Vec<Id> {
                     }
                 }
 
-                let loose_mode = !excluded && (loose_text_container(&name) || loose_inline);
+                let loose_mode = !excluded
+                    && (loose_text_container(&name)
+                        || loose_inline
+                        || (candidate(&name) && node_flags & F_DESC_NON_PROSE != 0));
                 if loose_mode {
+                    let old_children = dom.take_children(id);
+                    let mut new_children = Vec::with_capacity(old_children.len());
                     let mut items = Vec::new();
                     let mut run = Vec::new();
-                    let flush = |run: &mut Vec<Id>, items: &mut Vec<Work>| {
-                        if !run.is_empty() {
-                            if run.iter().any(|&n| flags[n] & F_PROSE != 0) {
-                                items.push(Work::LooseRun(std::mem::take(run)));
+                    let mut prev_inline_split = false;
+
+                    let flush = |dom: &mut Dom,
+                                 run: &mut Vec<Id>,
+                                 new_children: &mut Vec<Id>,
+                                 items: &mut Vec<Work>,
+                                 lead_split: bool,
+                                 trail_split: bool| {
+                        if run.is_empty() {
+                            return;
+                        }
+                        if run.iter().any(|&n| flags[n] & F_PROSE != 0) {
+                            let lead_ws = if lead_split {
+                                trim_inline_boundary_space(dom, run[0], true)
                             } else {
-                                run.clear();
+                                None
+                            };
+                            let trail_ws = if trail_split {
+                                trim_inline_boundary_space(dom, *run.last().unwrap(), false)
+                            } else {
+                                None
+                            };
+                            if let Some(ws) = lead_ws {
+                                new_children.push(dom.node(Kind::Text(ws)));
                             }
+                            let span =
+                                dom.wrap_detached("span", (LINE, "true"), std::mem::take(run));
+                            new_children.push(span);
+                            items.push(Work::EmitTarget(span));
+                            if let Some(ws) = trail_ws {
+                                new_children.push(dom.node(Kind::Text(ws)));
+                            }
+                        } else {
+                            new_children.extend(run.drain(..));
                         }
                     };
-                    for &child in dom.children(id) {
+
+                    for child in old_children {
                         match dom.kind(child) {
                             Kind::Tag(tag, _) => {
                                 let tag = tag.as_str();
                                 if tag == "br" || non_prose(tag) {
-                                    flush(&mut run, &mut items);
+                                    flush(
+                                        dom,
+                                        &mut run,
+                                        &mut new_children,
+                                        &mut items,
+                                        prev_inline_split,
+                                        false,
+                                    );
+                                    new_children.push(child);
+                                    prev_inline_split = false;
                                 } else if candidate(tag) || structural_boundary(tag) {
-                                    flush(&mut run, &mut items);
+                                    flush(
+                                        dom,
+                                        &mut run,
+                                        &mut new_children,
+                                        &mut items,
+                                        prev_inline_split,
+                                        false,
+                                    );
+                                    new_children.push(child);
                                     items.push(Work::Visit {
                                         id: child,
                                         in_nav: next_nav,
                                         in_nav_li: next_nav_li,
                                         loose_inline: false,
                                     });
+                                    prev_inline_split = false;
                                 } else if !atomic(tag) && flags[child] & F_DESC_SPLIT != 0 {
-                                    flush(&mut run, &mut items);
+                                    flush(
+                                        dom,
+                                        &mut run,
+                                        &mut new_children,
+                                        &mut items,
+                                        prev_inline_split,
+                                        true,
+                                    );
+                                    new_children.push(child);
                                     items.push(Work::Visit {
                                         id: child,
                                         in_nav: next_nav,
                                         in_nav_li: next_nav_li,
                                         loose_inline: true,
                                     });
+                                    prev_inline_split = true;
                                 } else {
                                     run.push(child);
                                 }
                             }
                             Kind::Text(_) => run.push(child),
-                            Kind::Raw(_) | Kind::Pi(_) => {}
+                            Kind::Raw(_) | Kind::Pi(_) => {
+                                // Keep comments and processing instructions outside runs so backfill
+                                // never deletes them, without splitting a sentence mid-run.
+                                new_children.push(child);
+                            }
                         }
                     }
-                    flush(&mut run, &mut items);
+                    flush(
+                        dom,
+                        &mut run,
+                        &mut new_children,
+                        &mut items,
+                        prev_inline_split,
+                        false,
+                    );
+                    dom.set_children(id, new_children);
                     for item in items.into_iter().rev() {
                         stack.push(item);
                     }
@@ -923,8 +1046,10 @@ pub(crate) fn annotate_dom_with_schema(
             })
             .collect();
         for id in markers {
-            let range = dom.parents(id).any(|p| range_roots.contains(&p));
-            let marker = dom.tag(if range { "span" } else { "a" });
+            let inside_link = dom
+                .parents(id)
+                .any(|p| range_roots.contains(&p) || dom.name(p) == "a");
+            let marker = dom.tag(if inside_link { "span" } else { "a" });
             for key in ["id", "name"] {
                 if let Some(s) = dom.attrs_mut(id).remove(key) {
                     dom.set(marker, key, s);
