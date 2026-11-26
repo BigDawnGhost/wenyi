@@ -6,7 +6,7 @@ import re
 from typing import TypeGuard
 from urllib.parse import urlsplit
 
-from bs4.element import Comment, NavigableString, ProcessingInstruction, Tag
+from bs4.element import Comment, Doctype, NavigableString, ProcessingInstruction, Tag
 
 from wenyi_core.markup.anchors import resolve_epub_href
 from wenyi_core.markup.contracts import ANNOTATION_ID_ATTR
@@ -132,11 +132,9 @@ def _inside_implicit_note_body(node: Tag) -> bool:
 
 
 def _is_text_string(node: object) -> TypeGuard[NavigableString]:
-    """Recognize actual text nodes, excluding XML processing instructions such as page-break
-    markers.
-    """
+    """Recognize actual text nodes, excluding XML comments, doctypes and processing instructions."""
     return isinstance(node, NavigableString) and not isinstance(
-        node, (Comment, ProcessingInstruction)
+        node, (Comment, Doctype, ProcessingInstruction)
     )
 
 

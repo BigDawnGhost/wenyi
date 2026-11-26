@@ -62,15 +62,17 @@ fn peek(py: Python<'_>, path: PathBuf) -> PyResult<String> {
 }
 
 #[pyfunction]
+#[pyo3(signature = (path, source_lang, target_lang, epub_schema=None))]
 fn ingest<'py>(
     py: Python<'py>,
     path: PathBuf,
     source_lang: &str,
     target_lang: &str,
+    epub_schema: Option<u32>,
 ) -> PyResult<Bound<'py, PyBytes>> {
     let data = guard(py, || {
             let _admission = workers::admit();
-            reader::ingest(&path, source_lang, target_lang)
+            reader::ingest_with_schema(&path, source_lang, target_lang, epub_schema)
         })
         .and_then(|result| result.map_err(value_error))?;
     Ok(PyBytes::new(py, &data))

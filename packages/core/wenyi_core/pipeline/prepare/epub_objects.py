@@ -31,7 +31,14 @@ def refresh_epub_objects(
         )
     if meta.get("epub_objects") == OBJECT_SCHEMA_VERSION:
         return
-    document = document or read_epub(epub_path, manifest["source_lang"], manifest["target_lang"])
+    saved_schema = meta.get("epub_schema")
+    schema = saved_schema if type(saved_schema) is int else 6
+    document = document or read_epub(
+        epub_path,
+        manifest["source_lang"],
+        manifest["target_lang"],
+        epub_schema=schema,
+    )
     fresh: dict[tuple[str | None, str], Segment] = {}
     for chapter in document.chapters:
         first: Segment | None = None

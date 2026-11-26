@@ -517,9 +517,24 @@ def test_mixed_loose_text_containers_and_non_prose_boundaries(tmp_path, monkeypa
     ids=["mono", "bilingual-target-first", "bilingual-source-first"],
 )
 def test_bare_body_br_epub_roundtrip_export(tmp_path, bilingual, order):
+    from wenyi_core.alignment import target_digest
+    from wenyi_core.markup.contracts import ANNOTATION_META_KEY
+
     source = tmp_path / "bare.epub"
     output = tmp_path / f"out-{bilingual}-{order}.epub"
-    _write_book(source, BARE_BODY_WEBNOVEL.encode("utf-8"))
+    markup = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">'
+        "<head><title>Chapter 1</title><style>body { color: #111; }</style></head>"
+        "<body>"
+        '<h1 class="hide720">第一章 陨石</h1>'
+        "　　第一段正文。<br/><br/>"
+        '　　第二段带有<em>强调</em>和<a id="n1"></a>锚点<a epub:type="noteref" href="#fn1">1</a>。<br/>'
+        "　　第三段结尾。"
+        '<aside id="fn1" epub:type="footnote"><p>脚注内容。</p></aside>'
+        "</body></html>"
+    )
+    _write_book(source, markup.encode("utf-8"))
 
     document = read_epub(source, "zh", "en")
     translations = [
@@ -527,9 +542,29 @@ def test_bare_body_br_epub_roundtrip_export(tmp_path, bilingual, order):
         "First body paragraph.",
         "Second paragraph with emphasis and anchor.",
         "Third closing paragraph.",
+        "Footnote body.",
     ]
     for seg, target in zip(document.chapters[0].segments, translations, strict=True):
         seg.target = target
+    # Exercise real ExportViewStore protected-object marker resolution and aligned noteref placement.
+    seg2 = document.chapters[0].segments[2]
+    ann_meta = seg2.meta[ANNOTATION_META_KEY]
+    obj_item = next(item for item in ann_meta["items"] if item["relation"] == "inline_object")
+    note_item = next(item for item in ann_meta["items"] if item["relation"] == "noteref")
+    seg2.target = f"Second paragraph with emphasis and {obj_item['marker']}anchor."
+    clean_target = "Second paragraph with emphasis and anchor."
+    note_pos = len("Second paragraph with emphasis and anchor")
+    ann_meta["placements"] = [
+        {
+            "id": note_item["id"],
+            "mode": "point",
+            "target_start": note_pos,
+            "target_end": note_pos,
+            "status": "aligned",
+            "method": "aligned",
+        }
+    ]
+    ann_meta["target_digest"] = target_digest(clean_target)
 
     with closing(FileStorage(str(tmp_path / "state"))) as store:
         store.init_from_document(document)
@@ -556,9 +591,18 @@ def test_bare_body_br_epub_roundtrip_export(tmp_path, bilingual, order):
     assert body is not None
     assert body.find("h1").get_text(strip=True) == "Chapter 1: The Meteorite"
     assert len(body.find_all("br")) >= 3
+    # Both the aligned interior anchor and footnote reference must survive backfill.
+    assert body.find(id="n1") is not None
+    assert body.find("a", href="#fn1") is not None
     body_text = body.get_text(" ", strip=True)
-    for translated in translations:
-        assert translated in body_text
+    for expected_text in (
+        "Chapter 1: The Meteorite",
+        "First body paragraph.",
+        "Second paragraph with emphasis and anchor 1 .",
+        "Third closing paragraph.",
+        "Footnote body.",
+    ):
+        assert expected_text in body_text
     if bilingual:
         source_spans = body.select("span.tn-source")
         assert len(source_spans) == 3
@@ -568,13 +612,22 @@ def test_bare_body_br_epub_roundtrip_export(tmp_path, bilingual, order):
             assert first_src_pos < first_tgt_pos
         else:
             assert first_tgt_pos < first_src_pos
+        # Bilingual source clone must remap its note link to the cloned footnote target.
+        cloned_note_links = [
+            a["href"] for span in source_spans for a in span.find_all("a", href=True)
+        ]
+        assert cloned_note_links
+        for href in cloned_note_links:
+            assert href.startswith("#")
+            assert body.find(id=href[1:]) is not None
     else:
         assert "第一段正文。" not in body_text
 
 
-def test_bare_body_br_html_export(tmp_path):
+@pytest.mark.parametrize("order", ["target_first", "source_first"])
+def test_bare_body_br_html_export(tmp_path, order):
     source = tmp_path / "bare.epub"
-    output = tmp_path / "out.html"
+    output = tmp_path / f"out-{order}.html"
     _write_book(source, BARE_BODY_WEBNOVEL.encode("utf-8"))
 
     document = read_epub(source, "zh", "en")
@@ -584,10 +637,243 @@ def test_bare_body_br_html_export(tmp_path):
     with closing(FileStorage(str(tmp_path / "state"))) as store:
         store.init_from_document(document)
         store.set_chapter_status(0, "done")
-        assemble(store, str(source), str(output), "html", bilingual=True, about_page=False)
+        assemble(
+            store,
+            str(source),
+            str(output),
+            "html",
+            bilingual=True,
+            order=order,
+            about_page=False,
+        )
 
     rendered = output.read_text(encoding="utf-8")
     assert "data-tn-line" not in rendered
     assert "Translated 0" in rendered
     assert "Translated 3" in rendered
     assert "第一段正文。" in rendered
+    src_pos = rendered.index("第一段正文。")
+    tgt_pos = rendered.index("Translated 1")
+    if order == "source_first":
+        assert src_pos < tgt_pos
+    else:
+        assert tgt_pos < src_pos
+
+
+@pytest.mark.parametrize("legacy_schema", [5, 6, None])
+@pytest.mark.parametrize("out_format", ["epub", "html"])
+def test_legacy_schema_export_and_object_refresh_do_not_shift_anchors(
+    tmp_path, monkeypatch, legacy_schema, out_format
+):
+    from wenyi_core.pipeline.prepare.epub_objects import refresh_epub_objects
+
+    markup = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+        "Loose intro<br/>"
+        "<h1>Heading</h1>"
+        '<p>First <img src="a.png"/> para</p>'
+        "* * *"
+        "<p>Second para</p>"
+        "</body></html>"
+    )
+    source = tmp_path / "legacy.epub"
+    output = tmp_path / f"out-{legacy_schema}.{out_format}"
+    _write_book(source, markup.encode("utf-8"))
+
+    # Simulate state saved under pre-schema-7 rules (candidate blocks only, no loose text).
+    with monkeypatch.context() as patch:
+        patch.setattr(epub_dom, "xhtml_tokens", None)
+        title, segments, _ = annotate_epub_resource(
+            markup, 0, "content.xhtml", extract_loose_text=False
+        )
+    assert [s.source for s in segments] == ["Heading", "First para", "Second para"]
+    for idx, seg in enumerate(segments):
+        seg.target = f"Translated {idx}"
+        seg.meta.pop(INLINE_META_KEY, None)
+
+    meta: dict[str, object] = {
+        "opf_path": "book.opf",
+        "epub_resources": [{"index": 0, "href": "content.xhtml"}],
+    }
+    if legacy_schema is not None:
+        meta["epub_schema"] = legacy_schema
+    document = Document(
+        title="Legacy",
+        source_lang="en",
+        target_lang="zh",
+        fmt="epub",
+        source_path=str(source),
+        chapters=[Chapter(index=0, title=title, href="content.xhtml", segments=segments)],
+        meta=meta,
+    )
+    state_dir = str(tmp_path / f"state-{legacy_schema}-{out_format}")
+    with closing(FileStorage(state_dir)) as store:
+        store.init_from_document(document)
+        store.set_chapter_status(0, "done")
+        # Refreshing protected objects on resume must also honor saved epub_schema.
+        refresh_epub_objects(store, str(source))
+        assert store.load_manifest()["meta"]["epub_objects"] == 1
+        assemble(store, str(source), str(output), out_format, bilingual=True, about_page=False)
+    assert output.exists() and output.stat().st_size > 0
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        (
+            "<div>A<br/><section>B<br/>C</section>D</div>",
+            ["A", "B", "C", "D"],
+        ),
+        (
+            "<div><pre>code line</pre></div>",
+            [],
+        ),
+        (
+            "<div>Before<hr/>After</div>",
+            ["Before", "After"],
+        ),
+        (
+            "A<span><template>Hidden</template>B</span>C",
+            ["A", "B", "C"],
+        ),
+        (
+            "<span>Hello<script>var x=1;</script>world</span>",
+            ["Hello", "world"],
+        ),
+        (
+            '<ul><li><a href="#target"><p id="target">First</p><p>Second</p></a></li></ul>',
+            ["First", "Second"],
+        ),
+        (
+            "<span>Before<p>Inside</p>After</span>",
+            ["Before", "Inside", "After"],
+        ),
+        (
+            "<span>Left<hr/>Right</span>",
+            ["Left", "Right"],
+        ),
+        (
+            "<b>bold A<br/>bold B</b><br/>C",
+            ["bold A", "bold B", "C"],
+        ),
+        (
+            "<div><div>Nested loose 1<br/>Nested loose 2</div></div>",
+            ["Nested loose 1", "Nested loose 2"],
+        ),
+        (
+            "　　<br/>Real line<br/>　　",
+            ["Real line"],
+        ),
+        (
+            '<img src="cover.jpg"/><a href="x"><img src="c2.jpg"/></a>'
+            '<svg xmlns="http://www.w3.org/2000/svg"><text>Cover</text></svg>',
+            [],
+        ),
+        (
+            "<ruby>漢字<rt>かんじ</rt></ruby> text<br/><ruby><rt>only</rt></ruby>",
+            ["漢字〘かんじ〙 text"],
+        ),
+        (
+            "<!-- comment --><?page 1?>Line 1<br/><!DOCTYPE html>Line 2",
+            ["Line 1", "Line 2"],
+        ),
+    ],
+    ids=[
+        "div-with-section",
+        "div-with-pre",
+        "div-with-hr",
+        "inline-with-template",
+        "inline-with-script",
+        "li-link-with-blocks",
+        "inline-around-p",
+        "inline-around-hr",
+        "inline-around-br",
+        "nested-div-loose",
+        "ideographic-space-only",
+        "cover-media-only",
+        "ruby-and-rt-only",
+        "comments-pi-doctype",
+    ],
+)
+def test_schema7_edge_cases_rust_python_parity_and_export(body, expected, tmp_path, monkeypatch):
+    markup = f'<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml"><body>{body}</body></html>'
+    raw = markup.encode("utf-8")
+    _, legacy = _legacy_resource(raw, monkeypatch)
+    source = tmp_path / "edge.epub"
+    document = _book(source, raw)
+    actual = [s.source for c in document.chapters for s in c.segments]
+    assert actual == expected
+    assert [s.source for s in legacy] == expected
+
+    # Verify mono + bilingual export preserves structural elements and never leaks wrappers.
+    if document.chapters:
+        for idx, seg in enumerate(document.chapters[0].segments):
+            seg.target = f"T{idx}"
+        with closing(FileStorage(str(tmp_path / "state"))) as store:
+            store.init_from_document(document)
+            store.set_chapter_status(0, "done")
+            for bilingual in (False, True):
+                out = tmp_path / f"out-{bilingual}.epub"
+                assemble(
+                    store, str(source), str(out), "epub", bilingual=bilingual, about_page=False
+                )
+                with ZipFile(out) as zf:
+                    xhtml = zf.read("content.xhtml").decode("utf-8")
+                assert "data-tn-line" not in xhtml
+                if "<template>" in body:
+                    assert "<template>Hidden</template>" in xhtml
+                if "<script>" in body:
+                    assert "<script>var x=1;</script>" in xhtml
+                if "<section>" in body:
+                    assert "<section>" in xhtml
+                if 'id="target"' in body:
+                    soup = BeautifulSoup(xhtml, "xml")
+                    assert soup.find(id="target") is not None
+                    # Must not create nested <a> tags inside <a href="#target">.
+                    assert all(a.find("a") is None for a in soup.find_all("a"))
+
+
+def test_skip_navigation_excludes_loose_text_inside_nav_li(tmp_path):
+    markup = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">'
+        "<body>"
+        '<nav epub:type="toc">'
+        "<h1>Contents</h1>"
+        "<div>TOC note</div>"
+        "<ol>"
+        '<li><a href="c1.xhtml">Chapter 1</a></li>'
+        "<li><div>Loose inside nav li</div></li>"
+        "</ol>"
+        "</nav>"
+        "</body></html>"
+    )
+    _, segments, _ = annotate_epub_resource(markup, 0, "nav.xhtml", skip_navigation=True)
+    assert [s.source for s in segments] == ["Contents", "TOC note"]
+
+
+def test_deeply_nested_spans_do_not_overflow_stack(tmp_path):
+    depth = 15000
+    markup = (
+        '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+        + "<span>" * depth
+        + "Deep bare text"
+        + "</span>" * depth
+        + "</body></html>"
+    )
+    document = _book(tmp_path / "deep.epub", markup.encode("utf-8"))
+    assert [s.source for s in document.chapters[0].segments] == ["Deep bare text"]
+
+    # Also verify Python's iterative target selection handles deep nesting without RecursionError.
+    from wenyi_core.markup.segments import _schema7_translation_targets
+
+    soup = BeautifulSoup("<html><body></body></html>", "html.parser")
+    parent = soup.body
+    for _ in range(1500):
+        span = soup.new_tag("span")
+        parent.append(span)
+        parent = span
+    parent.append("Deep python bare text")
+    targets = _schema7_translation_targets(soup, skip_navigation=False)
+    assert [t.get_text(strip=True) for t in targets] == ["Deep python bare text"]

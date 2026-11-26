@@ -202,6 +202,10 @@ impl Dom {
         dom
     }
 
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
     pub fn node(&mut self, kind: Kind) -> Id {
         let id = self.0.len();
         self.0.push(Node {

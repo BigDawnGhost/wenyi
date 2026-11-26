@@ -19,7 +19,10 @@ use crate::alignment::target_digest;
 use super::{
     archive::{open, read, rewrite, Archive},
     dom::{decode, decode_xml, escape, strip, Dom, Id, Kind},
-    extract::{annotate, FragmentIndex, Resource, ANCHOR, ANNOTATION, INLINE, LINE, OBJECT},
+    extract::{
+        annotate_with_schema, FragmentIndex, Resource, ANCHOR, ANNOTATION, EPUB_SCHEMA, INLINE,
+        LINE, OBJECT,
+    },
     ingest::{nav_headings, nav_labels, ncx_points, xml, Spec},
     links::{is_html, resolve},
     tokenizer::xml_encoding,
@@ -44,6 +47,8 @@ pub struct Options {
     pub about: Option<String>,
     #[serde(default)]
     pub resource_titles: HashMap<String, String>,
+    #[serde(default)]
+    pub epub_schema: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -178,12 +183,14 @@ fn prepare(spec: Spec, bytes: Vec<u8>, stored: Vec<Saved>, options: &Options) ->
     } else {
         decode(&bytes)
     };
-    let content = annotate(
+    let loose_text = options.epub_schema.is_some_and(|v| v >= EPUB_SCHEMA);
+    let content = annotate_with_schema(
         &text,
         spec.index,
         &href,
         &options.title,
         options.toc_paths.contains(&href),
+        loose_text,
     );
     let by_id: HashMap<_, _> = content
         .segments

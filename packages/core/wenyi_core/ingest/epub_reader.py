@@ -13,8 +13,14 @@ def peek_epub_title(path: str) -> str:
     return _epub_native.peek(path)
 
 
-def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
+def read_epub(
+    path: str,
+    source_lang: str,
+    target_lang: str,
+    *,
+    epub_schema: int | None = None,
+) -> Document:
     """Build a document with stable chapter, segment and annotation identities."""
     return Document.model_validate_json(
-        _epub_native.ingest(os.path.abspath(path), source_lang, target_lang)
+        _epub_native.ingest(os.path.abspath(path), source_lang, target_lang, epub_schema)
     )

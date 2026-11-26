@@ -407,143 +407,214 @@ _STRUCTURAL_BOUNDARY_TAGS = frozenset(
         "fieldset",
     }
 )
-_BOUNDARY_AND_CANDIDATE_TAGS = _BLOCK_CANDIDATE_TAGS | _STRUCTURAL_BOUNDARY_TAGS
+_F_TEXT = 1 << 0
+_F_PROSE = 1 << 1
+_F_DESC_CANDIDATE = 1 << 2
+_F_DESC_BOUNDARY = 1 << 3
+_F_DESC_SPLIT = 1 << 4
 
 
-def _node_has_prose(node: Tag | NavigableString) -> bool:
-    if isinstance(node, Tag):
-        if (
-            node.name in _ATOMIC_INLINE_TAGS
-            or node.name in _NON_PROSE_TAGS
-            or node.name in {"rt", "rp"}
-        ):
-            return False
-        return any(
-            _node_has_prose(child)
-            for child in node.children
-            if isinstance(child, Tag) or _is_text_string(child)
+def _compute_flags(root: Tag | BeautifulSoup) -> dict[int, int]:
+    """Compute bottom-up prose and structural flags iteratively in O(N) time."""
+    flags: dict[int, int] = {}
+    stack: list[tuple[Tag | BeautifulSoup | NavigableString, bool]] = [(root, False)]
+    while stack:
+        node, visited = stack.pop()
+        if not visited:
+            if isinstance(node, (Tag, BeautifulSoup)):
+                stack.append((node, True))
+                for child in reversed(list(node.children)):
+                    if isinstance(child, Tag) or _is_text_string(child):
+                        stack.append((child, False))
+            elif _is_text_string(node) and str(node).strip():
+                flags[id(node)] = _F_TEXT | _F_PROSE
+            continue
+        name = node.name if isinstance(node, Tag) else ""
+        prose_ok = not (
+            name in _ATOMIC_INLINE_TAGS or name in _NON_PROSE_TAGS or name in {"rt", "rp"}
         )
-    return _is_text_string(node) and bool(str(node).strip())
-
-
-def _flush_loose_run(
-    run: list[Tag | NavigableString],
-    soup: BeautifulSoup,
-    targets: list[Tag],
-) -> None:
-    if not run:
-        return
-    if any(_node_has_prose(node) for node in run):
-        wrapper = soup.new_tag("span")
-        wrapper[LINE_WRAPPER_ATTR] = "true"
-        run[0].insert_before(wrapper)
-        for node in run:
-            wrapper.append(node.extract())
-        targets.append(wrapper)
-    run.clear()
-
-
-def _collect_targets(
-    node: Tag | BeautifulSoup,
-    soup: BeautifulSoup,
-    *,
-    skip_navigation: bool,
-    in_nav: bool,
-    in_nav_li: bool,
-    targets: list[Tag],
-) -> None:
-    name = node.name if isinstance(node, Tag) else ""
-    if name in _NON_PROSE_TAGS:
-        return
-    if name == "nav":
-        next_nav, next_nav_li = True, False
-    elif in_nav and name == "li":
-        next_nav, next_nav_li = True, True
-    else:
-        next_nav, next_nav_li = in_nav, in_nav_li
-    excluded = skip_navigation and next_nav_li
-
-    if isinstance(node, Tag) and name in _BLOCK_CANDIDATE_TAGS:
-        has_descendant_block = _has_meaningful_descendant_block(node)
-        if name == "li":
-            link = _list_item_link_target(node)
-            if link is not None:
-                if not excluded:
-                    targets.extend(_split_direct_break_lines(link, soup))
-                for child in list(node.children):
-                    if child is not link and isinstance(child, Tag):
-                        _collect_targets(
-                            child,
-                            soup,
-                            skip_navigation=skip_navigation,
-                            in_nav=next_nav,
-                            in_nav_li=next_nav_li,
-                            targets=targets,
-                        )
-                return
-        if not has_descendant_block:
-            if not excluded:
-                targets.extend(_split_direct_break_lines(node, soup))
-            return
-
-    children = list(node.children)
-    if not excluded and name in _LOOSE_TEXT_CONTAINERS:
-        run: list[Tag | NavigableString] = []
-        for child in children:
+        f = 0
+        for child in node.children:
+            cf = flags.get(id(child), 0)
+            if cf & _F_TEXT:
+                f |= _F_TEXT
+            if prose_ok and (cf & _F_PROSE):
+                f |= _F_PROSE
             if isinstance(child, Tag):
-                if child.name == "br" or child.name in _NON_PROSE_TAGS:
-                    _flush_loose_run(run, soup, targets)
-                elif (
-                    child.name in _BOUNDARY_AND_CANDIDATE_TAGS
-                    or child.find(_BOUNDARY_AND_CANDIDATE_TAGS) is not None
+                cname = child.name
+                if (cname in _BLOCK_CANDIDATE_TAGS and (cf & _F_TEXT)) or (cf & _F_DESC_CANDIDATE):
+                    f |= _F_DESC_CANDIDATE
+                if cname in _STRUCTURAL_BOUNDARY_TAGS or (
+                    cname not in _ATOMIC_INLINE_TAGS
+                    and cname not in _NON_PROSE_TAGS
+                    and (cf & _F_DESC_BOUNDARY)
                 ):
-                    _flush_loose_run(run, soup, targets)
-                    _collect_targets(
-                        child,
-                        soup,
-                        skip_navigation=skip_navigation,
-                        in_nav=next_nav,
-                        in_nav_li=next_nav_li,
-                        targets=targets,
-                    )
-                else:
-                    run.append(child)
-            elif _is_text_string(child):
-                run.append(child)
-        _flush_loose_run(run, soup, targets)
-        return
+                    f |= _F_DESC_BOUNDARY
+                if (
+                    cname in _BLOCK_CANDIDATE_TAGS
+                    or cname in _STRUCTURAL_BOUNDARY_TAGS
+                    or cname in _NON_PROSE_TAGS
+                    or cname == "br"
+                    or (cname not in _ATOMIC_INLINE_TAGS and (cf & _F_DESC_SPLIT))
+                ):
+                    f |= _F_DESC_SPLIT
+        flags[id(node)] = f
+    return flags
 
-    for child in children:
-        if isinstance(child, Tag):
-            _collect_targets(
-                child,
-                soup,
-                skip_navigation=skip_navigation,
-                in_nav=next_nav,
-                in_nav_li=next_nav_li,
-                targets=targets,
+
+def _inside_navigation_list(element: Tag) -> bool:
+    """Check whether a block belongs to an EPUB3 nav TOC list."""
+    inside_nav = False
+    inside_list_item = element.name == "li"
+    for parent in element.parents:
+        if not isinstance(parent, Tag):
+            continue
+        if parent.name == "li":
+            inside_list_item = True
+        elif parent.name == "nav":
+            inside_nav = True
+            break
+    return inside_nav and inside_list_item
+
+
+def _legacy_translation_targets(soup: BeautifulSoup, *, skip_navigation: bool) -> list[Tag]:
+    """Pre-schema-7 candidate-only target selection for backward-compatible testing/export."""
+    targets: list[Tag] = []
+    for element in soup.find_all(_BLOCK_CANDIDATE_TAGS):
+        if skip_navigation and _inside_navigation_list(element):
+            continue
+        has_descendant_block = _has_meaningful_descendant_block(element)
+        if element.name == "li":
+            link = _list_item_link_target(element)
+            if link is not None:
+                targets.extend(_split_direct_break_lines(link, soup))
+            if link is not None or has_descendant_block:
+                continue
+        if has_descendant_block:
+            continue
+        targets.extend(_split_direct_break_lines(element, soup))
+    return targets
+
+
+def _schema7_translation_targets(soup: BeautifulSoup, *, skip_navigation: bool) -> list[Tag]:
+    """Iteratively select replaceable targets in document order, including loose prose runs."""
+    flags = _compute_flags(soup)
+    targets: list[Tag] = []
+    # Work items are either ("run", nodes) or ("visit", node, in_nav, in_nav_li, loose_inline).
+    stack: list[tuple] = [("visit", soup, False, False, False)]
+    while stack:
+        item = stack.pop()
+        if item[0] == "run":
+            run: list[Tag | NavigableString] = item[1]
+            if run:
+                wrapper = soup.new_tag("span")
+                wrapper[LINE_WRAPPER_ATTR] = "true"
+                run[0].insert_before(wrapper)
+                for node in run:
+                    wrapper.append(node.extract())
+                targets.append(wrapper)
+            continue
+
+        _, node, in_nav, in_nav_li, loose_inline = item
+        name = node.name if isinstance(node, Tag) else ""
+        if name in _NON_PROSE_TAGS:
+            continue
+        if name == "nav":
+            next_nav, next_nav_li = True, False
+        elif in_nav and name == "li":
+            next_nav, next_nav_li = True, True
+        else:
+            next_nav, next_nav_li = in_nav, in_nav_li
+        excluded = skip_navigation and next_nav_li
+        node_flags = flags.get(id(node), 0)
+
+        if isinstance(node, Tag) and name in _BLOCK_CANDIDATE_TAGS:
+            has_descendant_block = bool(node_flags & _F_DESC_CANDIDATE) or (
+                name in _LOOSE_TEXT_CONTAINERS and bool(node_flags & _F_DESC_BOUNDARY)
             )
+            if name == "li":
+                link = node.find("a", recursive=False)
+                if isinstance(link, Tag):
+                    lf = flags.get(id(link), 0)
+                    valid_link = (
+                        bool(lf & _F_TEXT)
+                        and not (lf & (_F_DESC_CANDIDATE | _F_DESC_BOUNDARY))
+                        and all(
+                            child is link
+                            or (
+                                isinstance(child, Tag)
+                                and (
+                                    child.name in _BLOCK_CANDIDATE_TAGS
+                                    or child.name in {"ul", "ol", "dl"}
+                                )
+                            )
+                            or not (flags.get(id(child), 0) & _F_TEXT)
+                            for child in node.children
+                        )
+                    )
+                    if valid_link:
+                        if not excluded:
+                            targets.extend(_split_direct_break_lines(link, soup))
+                        for child in reversed(list(node.children)):
+                            if child is not link and isinstance(child, Tag):
+                                stack.append(("visit", child, next_nav, next_nav_li, False))
+                        continue
+            if not has_descendant_block:
+                if not excluded:
+                    targets.extend(_split_direct_break_lines(node, soup))
+                continue
+
+        if not excluded and (name in _LOOSE_TEXT_CONTAINERS or loose_inline):
+            items: list[tuple] = []
+            run_buf: list[Tag | NavigableString] = []
+
+            def flush() -> None:
+                if run_buf:
+                    if any(flags.get(id(n), 0) & _F_PROSE for n in run_buf):
+                        items.append(("run", list(run_buf)))
+                    run_buf.clear()
+
+            for child in list(node.children):
+                if isinstance(child, Tag):
+                    cname = child.name
+                    if cname == "br" or cname in _NON_PROSE_TAGS:
+                        flush()
+                    elif cname in _BLOCK_CANDIDATE_TAGS or cname in _STRUCTURAL_BOUNDARY_TAGS:
+                        flush()
+                        items.append(("visit", child, next_nav, next_nav_li, False))
+                    elif cname not in _ATOMIC_INLINE_TAGS and (
+                        flags.get(id(child), 0) & _F_DESC_SPLIT
+                    ):
+                        flush()
+                        items.append(("visit", child, next_nav, next_nav_li, True))
+                    else:
+                        run_buf.append(child)
+                elif _is_text_string(child):
+                    run_buf.append(child)
+            flush()
+            for work in reversed(items):
+                stack.append(work)
+            continue
+
+        for child in reversed(list(node.children)):
+            if isinstance(child, Tag):
+                stack.append(("visit", child, next_nav, next_nav_li, False))
+    return targets
 
 
 def _translation_targets(
     soup: BeautifulSoup,
     *,
     skip_navigation: bool,
+    extract_loose_text: bool = True,
 ) -> list[Tag]:
     """Select the finest safely replaceable EPUB nodes in document order.
     Keep div/blockquote elements with child body blocks as containers, while extracting
     loose inline/br-separated prose runs directly inside body or block containers.
     """
-    targets: list[Tag] = []
-    _collect_targets(
-        soup,
-        soup,
-        skip_navigation=skip_navigation,
-        in_nav=False,
-        in_nav_li=False,
-        targets=targets,
-    )
-    return targets
+    if not extract_loose_text:
+        return _legacy_translation_targets(soup, skip_navigation=skip_navigation)
+    return _schema7_translation_targets(soup, skip_navigation=skip_navigation)
 
 
 def _looks_like_internal_title(title: str, href: str, book_title: str = "") -> bool:
@@ -563,6 +634,7 @@ def annotate_epub_resource(
     book_title: str = "",
     skip_navigation: bool = False,
     html_mode: bool = False,
+    extract_loose_text: bool = True,
 ) -> tuple[str, list[Segment], str]:
     """Annotate one physical XHTML and return its title, segments and backfill template.
     Use the physical resource index in anchors rather than the final Chapter index, so
@@ -576,6 +648,7 @@ def annotate_epub_resource(
         book_title=book_title,
         skip_navigation=skip_navigation,
         html_mode=html_mode,
+        extract_loose_text=extract_loose_text,
     )
     return title, segments, str(soup)
 
@@ -588,6 +661,7 @@ def annotate_resource_dom(
     book_title: str = "",
     skip_navigation: bool = False,
     html_mode: bool = False,
+    extract_loose_text: bool = True,
 ) -> tuple[str, list[Segment]]:
     """Annotate the caller's DOM in place, allowing export to backfill the same tree."""
     segments: list[Segment] = []
@@ -603,7 +677,11 @@ def annotate_resource_dom(
 
         targets = html_translation_targets(soup)
     else:
-        targets = _translation_targets(soup, skip_navigation=skip_navigation)
+        targets = _translation_targets(
+            soup,
+            skip_navigation=skip_navigation,
+            extract_loose_text=extract_loose_text,
+        )
     for el in targets:
         anchor = f"tn{resource_index}_{idx}"
         annotations = (

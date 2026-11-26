@@ -309,3 +309,71 @@ def test_parse_then_prepare_reuses_artifact_and_preserves_initialized_state(tmp_
         input_preparation.parse_document(store, str(source), config)
     assert store.load_manifest() == manifest
     assert store.load_chapter(0) == chapter
+
+
+@pytest.mark.parametrize("pdf", [False, True], ids=["epub", "mineru-pdf"])
+def test_parse_document_refreshes_schema6_cache_for_epub_and_mineru(tmp_path, pdf):
+    from wenyi_core.ingest.pdf_reader import pdf_cache_epub_path
+
+    _, config, _ = inputs(tmp_path)
+    bare_body = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+        "<h1>Chapter 1</h1>"
+        "First bare line.<br/>Second bare line."
+        "</body></html>"
+    )
+    if pdf:
+        source = tmp_path / "bare.pdf"
+        source.write_bytes(b"%PDF-1.4 offline mock")
+        store, digest = input_preparation.locate_input_storage(str(source), config, FileStorage)
+        epub = pdf_cache_epub_path(store.source_dir, digest)
+        epub.parent.mkdir(parents=True)
+        write_epub(
+            epub,
+            title="bare",
+            lang="en",
+            chapters=[EpubChapter("chapter.xhtml", "Chapter 1", bare_body)],
+            toc=[EpubTocEntry("chapter.xhtml", "Chapter 1")],
+            resources=[],
+        )
+    else:
+        source = tmp_path / "bare.epub"
+        write_epub(
+            source,
+            title="bare",
+            lang="en",
+            chapters=[EpubChapter("chapter.xhtml", "Chapter 1", bare_body)],
+            toc=[EpubTocEntry("chapter.xhtml", "Chapter 1")],
+            resources=[],
+        )
+        store, digest = input_preparation.locate_input_storage(str(source), config, FileStorage)
+
+    with store.lock():
+        fresh = input_preparation.parse_document(store, str(source), config)
+    assert fresh.meta["epub_schema"] == input_preparation.EPUB_INGEST_SCHEMA
+    assert [s.source for s in fresh.chapters[-1].segments] == [
+        "Chapter 1",
+        "First bare line.",
+        "Second bare line.",
+    ]
+
+    # Downgrade the cached parsed_document.json to schema 6 with only the heading segment.
+    cached = store.read_artifact("parsed_document.json")
+    assert isinstance(cached, dict)
+    cached["document"]["meta"]["epub_schema"] = 6
+    cached["document"]["chapters"][-1]["segments"] = cached["document"]["chapters"][-1]["segments"][
+        :1
+    ]
+    store.write_artifact("parsed_document.json", cached)
+
+    with (
+        store.lock(),
+        patch.object(
+            input_preparation, "load_document", wraps=input_preparation.load_document
+        ) as load,
+    ):
+        refreshed = input_preparation.parse_document(store, str(source), config)
+    load.assert_called_once()
+    assert refreshed.meta["epub_schema"] == input_preparation.EPUB_INGEST_SCHEMA
+    assert len(refreshed.chapters[-1].segments) == 3

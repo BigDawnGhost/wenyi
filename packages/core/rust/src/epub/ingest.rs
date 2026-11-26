@@ -13,7 +13,10 @@ use serde_json::{json, Map, Value};
 use super::{
     archive::{open, read, Archive},
     dom::{decode, decode_xml, strip, Dom, Id},
-    extract::{annotate, FragmentIndex, Resource, Segment, ANCHOR, ANNOTATION, INLINE, OBJECT},
+    extract::{
+        annotate_with_schema, FragmentIndex, Resource, Segment, ANCHOR, ANNOTATION, EPUB_SCHEMA,
+        INLINE, OBJECT,
+    },
     links::{is_html, resolve, Link},
     workers::ordered_map,
 };
@@ -703,7 +706,14 @@ fn locate_boundaries(
     (String::new(), BTreeMap::new())
 }
 
-pub fn ingest(path: &Path, source_lang: &str, target_lang: &str) -> Result<Vec<u8>> {
+pub fn ingest_with_schema(
+    path: &Path,
+    source_lang: &str,
+    target_lang: &str,
+    epub_schema: Option<u32>,
+) -> Result<Vec<u8>> {
+    let schema = epub_schema.unwrap_or(EPUB_SCHEMA);
+    let loose_text = schema >= EPUB_SCHEMA;
     let mut zip = open(path)?;
     let package = package(&mut zip)?;
     let mut nav_titles = Vec::new();
@@ -736,12 +746,13 @@ pub fn ingest(path: &Path, source_lang: &str, target_lang: &str) -> Result<Vec<u
         .map(|spec| Ok((spec, read(&mut zip, &spec.href)?)))
         .collect::<Result<Vec<_>>>()?;
     let mut resources = ordered_map(inputs, |(spec, bytes)| {
-        annotate(
+        annotate_with_schema(
             &decode(&bytes),
             spec.index,
             &spec.href,
             &package.title,
             package.toc_paths.contains(&spec.href),
+            loose_text,
         )
     });
     let indices: Vec<_> = resources
@@ -827,7 +838,7 @@ pub fn ingest(path: &Path, source_lang: &str, target_lang: &str) -> Result<Vec<u
             push(title, href, chunk, e.map(|e| e.entry_id.as_str()));
         }
     }
-    let mut meta = json!({"epub_schema": 7, "epub_objects": 1, "opf_path": package.opf, "toc_paths": package.toc_paths,
+    let mut meta = json!({"epub_schema": schema, "epub_objects": 1, "opf_path": package.opf, "toc_paths": package.toc_paths,
         "toc_entries": toc, "epub_resources": &specs[..spine], "epub_split_strategy": strategy,
         "epub_split_toc_path": canonical, "epub_annotation_contexts": contexts});
     if let Some(obj) = meta.as_object_mut() {

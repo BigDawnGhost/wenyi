@@ -19,6 +19,7 @@ pub const ANNOTATION: &str = "data-tn-annotation-id";
 pub const INLINE: &str = "data-tn-inline-id";
 pub const LINE: &str = "data-tn-line";
 pub const OBJECT: &str = "inline_object";
+pub const EPUB_SCHEMA: u32 = 7;
 
 #[derive(Serialize)]
 pub struct Segment {
@@ -61,6 +62,8 @@ fn non_prose(name: &str) -> bool {
     )
 }
 fn structural_boundary(name: &str) -> bool {
+    // Note: `hr` is also in `atomic` so `<p>` treats it as an inline object, while
+    // loose-text containers treat it as a block thematic break between prose runs.
     matches!(
         name,
         "section"
@@ -108,6 +111,69 @@ fn atomic(name: &str) -> bool {
     )
 }
 
+const F_TEXT: u8 = 1 << 0;
+const F_PROSE: u8 = 1 << 1;
+const F_DESC_CANDIDATE: u8 = 1 << 2;
+const F_DESC_BOUNDARY: u8 = 1 << 3;
+const F_DESC_SPLIT: u8 = 1 << 4;
+
+fn compute_flags(dom: &Dom) -> Vec<u8> {
+    let mut flags = vec![0u8; dom.len()];
+    let mut stack = vec![(0usize, false)];
+    while let Some((id, visited)) = stack.pop() {
+        if !visited {
+            match dom.kind(id) {
+                Kind::Text(text) => {
+                    if !strip(text).is_empty() {
+                        flags[id] = F_TEXT | F_PROSE;
+                    }
+                }
+                Kind::Tag(..) => {
+                    stack.push((id, true));
+                    for &child in dom.children(id).iter().rev() {
+                        stack.push((child, false));
+                    }
+                }
+                Kind::Raw(_) | Kind::Pi(_) => {}
+            }
+            continue;
+        }
+        let name = dom.name(id);
+        let prose_ok = !(atomic(name) || non_prose(name) || matches!(name, "rt" | "rp"));
+        let mut f = 0u8;
+        for &child in dom.children(id) {
+            let cf = flags[child];
+            if cf & F_TEXT != 0 {
+                f |= F_TEXT;
+            }
+            if prose_ok && cf & F_PROSE != 0 {
+                f |= F_PROSE;
+            }
+            if let Kind::Tag(cname, _) = dom.kind(child) {
+                let cname = cname.as_str();
+                if (candidate(cname) && cf & F_TEXT != 0) || cf & F_DESC_CANDIDATE != 0 {
+                    f |= F_DESC_CANDIDATE;
+                }
+                if structural_boundary(cname)
+                    || (!atomic(cname) && !non_prose(cname) && cf & F_DESC_BOUNDARY != 0)
+                {
+                    f |= F_DESC_BOUNDARY;
+                }
+                if candidate(cname)
+                    || structural_boundary(cname)
+                    || non_prose(cname)
+                    || cname == "br"
+                    || (!atomic(cname) && cf & F_DESC_SPLIT != 0)
+                {
+                    f |= F_DESC_SPLIT;
+                }
+            }
+        }
+        flags[id] = f;
+    }
+    flags
+}
+
 fn push_break_lines(dom: &mut Dom, node: Id, out: &mut Vec<Id>) {
     if !dom.children(node).iter().any(|&n| dom.name(n) == "br") {
         out.push(node);
@@ -137,133 +203,213 @@ fn push_break_lines(dom: &mut Dom, node: Id, out: &mut Vec<Id>) {
     }
 }
 
-fn has_prose(dom: &Dom, id: Id) -> bool {
-    match dom.kind(id) {
-        Kind::Text(text) => !strip(text).is_empty(),
-        Kind::Tag(name, _) => {
-            if atomic(name) || non_prose(name) || matches!(name.as_str(), "rt" | "rp") {
-                return false;
+fn legacy_targets(dom: &mut Dom, skip_nav: bool) -> Vec<Id> {
+    let choices: Vec<_> = dom.tags(0).filter(|&id| candidate(dom.name(id))).collect();
+    let mut targets = Vec::new();
+    for el in choices {
+        if skip_nav {
+            let mut li = dom.name(el) == "li";
+            let mut excluded = false;
+            for parent in dom.parents(el) {
+                if dom.name(parent) == "nav" {
+                    excluded = li;
+                    break;
+                }
+                li |= dom.name(parent) == "li";
             }
-            dom.children(id).iter().any(|&child| has_prose(dom, child))
+            if excluded {
+                continue;
+            }
         }
-        _ => false,
-    }
-}
-
-fn flush_loose_run(dom: &mut Dom, run: &mut Vec<Id>, out: &mut Vec<Id>) {
-    if run.is_empty() {
-        return;
-    }
-    if run.iter().any(|&id| has_prose(dom, id)) {
-        let first = run[0];
-        let span = dom.tag("span");
-        dom.set(span, LINE, "true");
-        dom.insert(first, span, false);
-        for id in run.drain(..) {
-            dom.append(span, id);
-        }
-        out.push(span);
-    } else {
-        run.clear();
-    }
-}
-
-fn collect_targets(
-    dom: &mut Dom,
-    node: Id,
-    skip_nav: bool,
-    in_nav: bool,
-    in_nav_li: bool,
-    out: &mut Vec<Id>,
-) {
-    let name = dom.name(node).to_owned();
-    if !name.is_empty() && non_prose(&name) {
-        return;
-    }
-    let (next_nav, next_nav_li) = if name == "nav" {
-        (true, false)
-    } else if in_nav && name == "li" {
-        (true, true)
-    } else {
-        (in_nav, in_nav_li)
-    };
-    let excluded = skip_nav && next_nav_li;
-
-    if !name.is_empty() && candidate(&name) {
         let descendant_block = dom
-            .tags(node)
+            .tags(el)
             .any(|id| candidate(dom.name(id)) && dom.meaningful(id));
-        let link = (name == "li")
-            .then(|| dom.direct(node, "a"))
+        let link = (dom.name(el) == "li")
+            .then(|| dom.direct(el, "a"))
             .flatten()
             .filter(|&link| {
                 dom.meaningful(link)
-                    && dom.children(node).iter().all(|&child| {
+                    && dom.children(el).iter().all(|&child| {
                         child == link
                             || candidate(dom.name(child))
                             || matches!(dom.name(child), "ul" | "ol" | "dl")
                             || !visible(dom, child)
                     })
             });
-        if let Some(link_id) = link {
-            if !excluded {
-                push_break_lines(dom, link_id, out);
-            }
-            for child in dom.children(node).to_vec() {
-                if child != link_id && matches!(dom.kind(child), Kind::Tag(..)) {
-                    collect_targets(dom, child, skip_nav, next_nav, next_nav_li, out);
-                }
-            }
-            return;
+        if descendant_block && link.is_none() {
+            continue;
         }
-        if !descendant_block {
-            if !excluded {
-                push_break_lines(dom, node, out);
-            }
-            return;
-        }
+        let node = link.unwrap_or(el);
+        push_break_lines(dom, node, &mut targets);
     }
-
-    let children = dom.children(node).to_vec();
-    if !excluded && loose_text_container(&name) {
-        let mut run = Vec::new();
-        for child in children {
-            match dom.kind(child) {
-                Kind::Tag(tag, _) => {
-                    let tag = tag.clone();
-                    if tag == "br" || non_prose(&tag) {
-                        flush_loose_run(dom, &mut run, out);
-                    } else if candidate(&tag)
-                        || structural_boundary(&tag)
-                        || dom
-                            .tags(child)
-                            .any(|id| candidate(dom.name(id)) || structural_boundary(dom.name(id)))
-                    {
-                        flush_loose_run(dom, &mut run, out);
-                        collect_targets(dom, child, skip_nav, next_nav, next_nav_li, out);
-                    } else {
-                        run.push(child);
-                    }
-                }
-                Kind::Text(_) => run.push(child),
-                Kind::Raw(_) | Kind::Pi(_) => {}
-            }
-        }
-        flush_loose_run(dom, &mut run, out);
-        return;
-    }
-
-    for child in children {
-        if matches!(dom.kind(child), Kind::Tag(..)) {
-            collect_targets(dom, child, skip_nav, next_nav, next_nav_li, out);
-        }
-    }
+    targets
 }
 
-fn targets(dom: &mut Dom, skip_nav: bool) -> Vec<Id> {
-    let mut targets = Vec::new();
-    collect_targets(dom, 0, skip_nav, false, false, &mut targets);
-    targets
+enum Work {
+    LooseRun(Vec<Id>),
+    Visit {
+        id: Id,
+        in_nav: bool,
+        in_nav_li: bool,
+        loose_inline: bool,
+    },
+}
+
+fn schema7_targets(dom: &mut Dom, skip_nav: bool) -> Vec<Id> {
+    let flags = compute_flags(dom);
+    let mut out = Vec::new();
+    let mut stack = vec![Work::Visit {
+        id: 0,
+        in_nav: false,
+        in_nav_li: false,
+        loose_inline: false,
+    }];
+    while let Some(work) = stack.pop() {
+        match work {
+            Work::LooseRun(run) => {
+                if let Some(&first) = run.first() {
+                    let span = dom.tag("span");
+                    dom.set(span, LINE, "true");
+                    dom.insert(first, span, false);
+                    for id in run {
+                        dom.append(span, id);
+                    }
+                    out.push(span);
+                }
+            }
+            Work::Visit {
+                id,
+                in_nav,
+                in_nav_li,
+                loose_inline,
+            } => {
+                let name = dom.name(id).to_owned();
+                if !name.is_empty() && non_prose(&name) {
+                    continue;
+                }
+                let (next_nav, next_nav_li) = if name == "nav" {
+                    (true, false)
+                } else if in_nav && name == "li" {
+                    (true, true)
+                } else {
+                    (in_nav, in_nav_li)
+                };
+                let excluded = skip_nav && next_nav_li;
+                let node_flags = flags[id];
+
+                if !name.is_empty() && candidate(&name) {
+                    let descendant_block = (node_flags & F_DESC_CANDIDATE != 0)
+                        || (loose_text_container(&name) && node_flags & F_DESC_BOUNDARY != 0);
+                    let link = (name == "li")
+                        .then(|| dom.direct(id, "a"))
+                        .flatten()
+                        .filter(|&link| {
+                            let lf = flags[link];
+                            lf & F_TEXT != 0
+                                && lf & (F_DESC_CANDIDATE | F_DESC_BOUNDARY) == 0
+                                && dom.children(id).iter().all(|&child| {
+                                    child == link
+                                        || candidate(dom.name(child))
+                                        || matches!(dom.name(child), "ul" | "ol" | "dl")
+                                        || flags[child] & F_TEXT == 0
+                                })
+                        });
+                    if let Some(link_id) = link {
+                        if !excluded {
+                            push_break_lines(dom, link_id, &mut out);
+                        }
+                        for &child in dom.children(id).iter().rev() {
+                            if child != link_id && matches!(dom.kind(child), Kind::Tag(..)) {
+                                stack.push(Work::Visit {
+                                    id: child,
+                                    in_nav: next_nav,
+                                    in_nav_li: next_nav_li,
+                                    loose_inline: false,
+                                });
+                            }
+                        }
+                        continue;
+                    }
+                    if !descendant_block {
+                        if !excluded {
+                            push_break_lines(dom, id, &mut out);
+                        }
+                        continue;
+                    }
+                }
+
+                let loose_mode = !excluded && (loose_text_container(&name) || loose_inline);
+                if loose_mode {
+                    let mut items = Vec::new();
+                    let mut run = Vec::new();
+                    let flush = |run: &mut Vec<Id>, items: &mut Vec<Work>| {
+                        if !run.is_empty() {
+                            if run.iter().any(|&n| flags[n] & F_PROSE != 0) {
+                                items.push(Work::LooseRun(std::mem::take(run)));
+                            } else {
+                                run.clear();
+                            }
+                        }
+                    };
+                    for &child in dom.children(id) {
+                        match dom.kind(child) {
+                            Kind::Tag(tag, _) => {
+                                let tag = tag.as_str();
+                                if tag == "br" || non_prose(tag) {
+                                    flush(&mut run, &mut items);
+                                } else if candidate(tag) || structural_boundary(tag) {
+                                    flush(&mut run, &mut items);
+                                    items.push(Work::Visit {
+                                        id: child,
+                                        in_nav: next_nav,
+                                        in_nav_li: next_nav_li,
+                                        loose_inline: false,
+                                    });
+                                } else if !atomic(tag) && flags[child] & F_DESC_SPLIT != 0 {
+                                    flush(&mut run, &mut items);
+                                    items.push(Work::Visit {
+                                        id: child,
+                                        in_nav: next_nav,
+                                        in_nav_li: next_nav_li,
+                                        loose_inline: true,
+                                    });
+                                } else {
+                                    run.push(child);
+                                }
+                            }
+                            Kind::Text(_) => run.push(child),
+                            Kind::Raw(_) | Kind::Pi(_) => {}
+                        }
+                    }
+                    flush(&mut run, &mut items);
+                    for item in items.into_iter().rev() {
+                        stack.push(item);
+                    }
+                    continue;
+                }
+
+                for &child in dom.children(id).iter().rev() {
+                    if matches!(dom.kind(child), Kind::Tag(..)) {
+                        stack.push(Work::Visit {
+                            id: child,
+                            in_nav: next_nav,
+                            in_nav_li: next_nav_li,
+                            loose_inline: false,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+fn targets(dom: &mut Dom, skip_nav: bool, loose_text: bool) -> Vec<Id> {
+    if loose_text {
+        schema7_targets(dom, skip_nav)
+    } else {
+        legacy_targets(dom, skip_nav)
+    }
 }
 
 fn visible(dom: &Dom, id: Id) -> bool {
@@ -717,24 +863,33 @@ pub(crate) fn normalize(raw: &str, offsets: &[usize]) -> (String, Vec<usize>) {
     )
 }
 
-pub fn annotate(
+pub fn annotate_with_schema(
     markup: &str,
     index: usize,
     href: &str,
     book_title: &str,
     skip_nav: bool,
+    loose_text: bool,
 ) -> Resource {
-    annotate_dom(Dom::parse(markup), index, href, book_title, skip_nav)
+    annotate_dom_with_schema(
+        Dom::parse(markup),
+        index,
+        href,
+        book_title,
+        skip_nav,
+        loose_text,
+    )
 }
 
-pub(crate) fn annotate_dom(
+pub(crate) fn annotate_dom_with_schema(
     mut dom: Dom,
     index: usize,
     href: &str,
     book_title: &str,
     skip_nav: bool,
+    loose_text: bool,
 ) -> Resource {
-    let targets = targets(&mut dom, skip_nav);
+    let targets = targets(&mut dom, skip_nav, loose_text);
     let mut segments = Vec::with_capacity(targets.len());
     let mut first_heading = None;
     let mut title = String::new();
