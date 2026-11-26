@@ -40,6 +40,7 @@ def _extract_chapter(
         chapter_index,
         f"html-chapter-{chapter_index}.xhtml",
         html_mode=preserve_inline_markup,
+        extract_loose_text=False,
     )
     # ``resource_href`` only has meaning for EPUB's physical-resource rebuild.
     for segment in segments:

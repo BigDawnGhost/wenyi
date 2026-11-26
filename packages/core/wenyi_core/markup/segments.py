@@ -12,9 +12,14 @@ from wenyi_core.alignment.objects import object_marker
 from wenyi_core.markup import _epub_native
 from wenyi_core.markup.annotations import (
     _ANNOTATION_MARKER_ONLY,
+    _BACKLINK_SEMANTICS,
+    _NOTEREF_SEMANTICS,
     _annotation_roots,
     _hoist_processing_instructions,
+    _is_internal_link,
     _is_text_string,
+    _range_marker_node,
+    _semantic_tokens,
 )
 from wenyi_core.markup.contracts import (
     _ATOMIC_INLINE_TAGS,
@@ -455,8 +460,14 @@ _F_DESC_CANDIDATE = 1 << 2
 _F_DESC_ANY_BLOCK = 1 << 3
 _F_DESC_SPLIT = 1 << 4
 _F_DESC_NON_PROSE = 1 << 5
-_F_DESC_NOTE_MARKER = 1 << 6
 _ASCII_WS = " \t\n\r\x0b\x0c"
+
+
+def _is_note_link(link: Tag) -> bool:
+    return _is_internal_link(link) and (
+        bool(_semantic_tokens(link) & (_NOTEREF_SEMANTICS | _BACKLINK_SEMANTICS))
+        or _range_marker_node(link) is not None
+    )
 
 
 def _compute_flags(root: Tag | BeautifulSoup) -> dict[int, int]:
@@ -487,7 +498,7 @@ def _compute_flags(root: Tag | BeautifulSoup) -> dict[int, int]:
                 f |= _F_PROSE
             if isinstance(child, Tag):
                 cname = child.name
-                is_href_link = cname == "a" and child.has_attr("href")
+                is_internal_link = cname == "a" and _is_internal_link(child)
                 if (
                     cname not in _ATOMIC_INLINE_TAGS
                     and cname not in _NON_PROSE_TAGS
@@ -511,22 +522,16 @@ def _compute_flags(root: Tag | BeautifulSoup) -> dict[int, int]:
                     or cname == "br"
                     or (
                         cname not in _ATOMIC_INLINE_TAGS
-                        and not is_href_link
+                        and not is_internal_link
                         and (cf & _F_DESC_SPLIT)
                     )
-                    or (is_href_link and (cf & _F_DESC_ANY_BLOCK))
+                    or (is_internal_link and (cf & _F_DESC_ANY_BLOCK))
                 ):
                     f |= _F_DESC_SPLIT
                 if cname in _NON_PROSE_TAGS or (
                     cname not in _ATOMIC_INLINE_TAGS and (cf & _F_DESC_NON_PROSE)
                 ):
                     f |= _F_DESC_NON_PROSE
-                if cname in {"sup", "sub"} or (
-                    cname not in _ATOMIC_INLINE_TAGS
-                    and cname not in _NON_PROSE_TAGS
-                    and (cf & _F_DESC_NOTE_MARKER)
-                ):
-                    f |= _F_DESC_NOTE_MARKER
         flags[id(node)] = f
     return flags
 
@@ -624,7 +629,7 @@ def _schema7_translation_targets(soup: BeautifulSoup, *, skip_navigation: bool) 
                     )
                     if valid_link:
                         split_link = bool(lf & _F_DESC_ANY_BLOCK) or (
-                            bool(lf & _F_DESC_SPLIT) and not bool(lf & _F_DESC_NOTE_MARKER)
+                            bool(lf & _F_DESC_SPLIT) and not _is_note_link(link)
                         )
                         if not split_link and not excluded:
                             targets.append(link)
@@ -709,7 +714,7 @@ def _schema7_translation_targets(soup: BeautifulSoup, *, skip_navigation: bool) 
                         cname not in _ATOMIC_INLINE_TAGS
                         and not (
                             cname == "a"
-                            and child.has_attr("href")
+                            and _is_internal_link(child)
                             and not (flags.get(id(child), 0) & _F_DESC_ANY_BLOCK)
                         )
                         and (flags.get(id(child), 0) & _F_DESC_SPLIT)

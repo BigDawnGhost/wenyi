@@ -130,10 +130,42 @@ const F_DESC_CANDIDATE: u8 = 1 << 2;
 const F_DESC_ANY_BLOCK: u8 = 1 << 3;
 const F_DESC_SPLIT: u8 = 1 << 4;
 const F_DESC_NON_PROSE: u8 = 1 << 5;
-const F_DESC_NOTE_MARKER: u8 = 1 << 6;
 
 fn is_ascii_ws(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c')
+}
+
+fn is_internal_href(dom: &Dom, id: Id) -> bool {
+    dom.name(id) == "a"
+        && dom
+            .attr(id, "href")
+            .is_some_and(|raw| !strip(raw).is_empty() && !resolve("", raw).external)
+}
+
+fn trailing_note_marker(dom: &Dom, link: Id) -> Option<Id> {
+    dom.children(link)
+        .iter()
+        .rev()
+        .copied()
+        .find(|&id| !matches!(dom.kind(id), Kind::Text(s) if strip(s).is_empty()))
+        .filter(|&id| {
+            if !matches!(dom.name(id), "sup" | "sub") {
+                return false;
+            }
+            let text = dom.text(id, "", true);
+            MARKER.is_match(&text)
+                && (dom.name(id) != "sub" || DECORATED.is_match(&text))
+                && hint(dom, link, id, &text, true)
+        })
+}
+
+fn is_note_link(dom: &Dom, link: Id) -> bool {
+    is_internal_href(dom, link)
+        && (semantic(
+            dom,
+            link,
+            &["noteref", "doc-noteref", "backlink", "doc-backlink"],
+        ) || trailing_note_marker(dom, link).is_some())
 }
 
 fn compute_flags(dom: &Dom) -> Vec<u8> {
@@ -170,7 +202,7 @@ fn compute_flags(dom: &Dom) -> Vec<u8> {
             }
             if let Kind::Tag(cname, _) = dom.kind(child) {
                 let cname = cname.as_str();
-                let is_href_link = cname == "a" && dom.attr(child, "href").is_some();
+                let is_internal_link = is_internal_href(dom, child);
                 if !atomic(cname)
                     && !non_prose(cname)
                     && ((candidate(cname) && cf & F_TEXT != 0) || cf & F_DESC_CANDIDATE != 0)
@@ -188,18 +220,13 @@ fn compute_flags(dom: &Dom) -> Vec<u8> {
                     || structural_boundary(cname)
                     || non_prose(cname)
                     || cname == "br"
-                    || (!atomic(cname) && !is_href_link && cf & F_DESC_SPLIT != 0)
-                    || (is_href_link && cf & F_DESC_ANY_BLOCK != 0)
+                    || (!atomic(cname) && !is_internal_link && cf & F_DESC_SPLIT != 0)
+                    || (is_internal_link && cf & F_DESC_ANY_BLOCK != 0)
                 {
                     f |= F_DESC_SPLIT;
                 }
                 if non_prose(cname) || (!atomic(cname) && cf & F_DESC_NON_PROSE != 0) {
                     f |= F_DESC_NON_PROSE;
-                }
-                if matches!(cname, "sup" | "sub")
-                    || (!atomic(cname) && !non_prose(cname) && cf & F_DESC_NOTE_MARKER != 0)
-                {
-                    f |= F_DESC_NOTE_MARKER;
                 }
             }
         }
@@ -359,8 +386,7 @@ fn schema7_targets(dom: &mut Dom, skip_nav: bool) -> Vec<Id> {
                         });
                     if let Some(link_id) = link {
                         let split_link = (flags[link_id] & F_DESC_ANY_BLOCK != 0)
-                            || (flags[link_id] & F_DESC_SPLIT != 0
-                                && flags[link_id] & F_DESC_NOTE_MARKER == 0);
+                            || (flags[link_id] & F_DESC_SPLIT != 0 && !is_note_link(dom, link_id));
                         if !split_link && !excluded {
                             out.push(link_id);
                         }
@@ -510,8 +536,7 @@ fn schema7_targets(dom: &mut Dom, skip_nav: bool) -> Vec<Id> {
                                     });
                                     prev_inline_split = false;
                                 } else if !atomic(tag)
-                                    && !(tag == "a"
-                                        && dom.attr(child, "href").is_some()
+                                    && !(is_internal_href(dom, child)
                                         && flags[child] & F_DESC_ANY_BLOCK == 0)
                                     && flags[child] & F_DESC_SPLIT != 0
                                 {
@@ -811,20 +836,7 @@ fn annotations(dom: &mut Dom, block: Id, anchor: &str, href: &str) -> Vec<Annota
             }
         }
         let marker = if wrapper.is_none() {
-            dom.children(link)
-                .iter()
-                .rev()
-                .copied()
-                .find(|&id| !matches!(dom.kind(id), Kind::Text(s) if strip(s).is_empty()))
-                .filter(|&id| {
-                    if !matches!(dom.name(id), "sup" | "sub") {
-                        return false;
-                    }
-                    let text = dom.text(id, "", true);
-                    MARKER.is_match(&text)
-                        && (dom.name(id) != "sub" || DECORATED.is_match(&text))
-                        && hint(dom, link, id, &text, true)
-                })
+            trailing_note_marker(dom, link)
         } else {
             None
         };

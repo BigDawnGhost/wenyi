@@ -57,7 +57,9 @@ def test_region_plan_preserves_nested_barriers_and_ruby():
     ],
 )
 def test_legacy_block_templates_match_epub_extraction(fragment):
-    title, expected, template = annotate_epub_resource(fragment, 3, "html-chapter-3.xhtml")
+    title, expected, template = annotate_epub_resource(
+        fragment, 3, "html-chapter-3.xhtml", extract_loose_text=False
+    )
     for segment in expected:
         segment.resource_href = None
     assert _extract_chapter(fragment, 3, preserve_inline_markup=False) == (

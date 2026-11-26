@@ -782,6 +782,14 @@ def test_legacy_schema_export_and_object_refresh_do_not_shift_anchors(
             ["A", "B"],
         ),
         (
+            '<ul><li><a href="chapter2.xhtml">Einstein<br/>E = mc<sup>2</sup></a></li></ul>',
+            ["Einstein", "E = mc2"],
+        ),
+        (
+            '<a href="https://example.com">First<br/>Second</a>',
+            ["First", "Second"],
+        ),
+        (
             "A <span>B<br/>C</span> D<br/>E",
             ["A", "B", "C", "D", "E"],
         ),
@@ -883,6 +891,8 @@ def test_legacy_schema_export_and_object_refresh_do_not_shift_anchors(
         "anchor-only-split-inner-id",
         "li-link-empty-block-id",
         "li-link-nested-span-br",
+        "li-link-formula-sup-br",
+        "external-link-br",
         "split-inline-boundary-spaces",
         "split-inline-inner-boundary-spaces",
         "split-inline-inner-tag-boundary-spaces",
@@ -957,8 +967,36 @@ def test_schema7_edge_cases_rust_python_parity_and_export(body, expected, tmp_pa
                     assert "<p>T0 <template>Hidden</template> T1</p>" in xhtml
                 if body == '<ul><li><a href="ch1.xhtml"><span>A<br/>B</span></a></li></ul>':
                     assert "<br" in xhtml and "<span>" in xhtml
+                if (
+                    body
+                    == '<ul><li><a href="chapter2.xhtml">Einstein<br/>E = mc<sup>2</sup></a></li></ul>'
+                ):
+                    assert "<br" in xhtml and "chapter2.xhtml" in xhtml
+                if body == '<a href="https://example.com">First<br/>Second</a>' and not bilingual:
+                    assert '<a href="https://example.com">T0<br/>T1</a>' in xhtml
                 if body == "<div>A<?pagebreak 5?>B<br/>C</div>" and not bilingual:
                     assert "<div>T0<?pagebreak 5?><br/>T1</div>" in xhtml
+
+
+def test_legacy_html_project_export_keeps_pre_schema7_anchors(tmp_path):
+    from wenyi_core.ingest.html_reader import read_html
+
+    source = tmp_path / "legacy.html"
+    output = tmp_path / "out.html"
+    source.write_text(
+        "<html><body><div>Loose<br/><p>Saved paragraph</p></div></body></html>",
+        encoding="utf-8",
+    )
+    document = read_html(str(source), "en", "zh", preserve_inline_markup=False)
+    assert [s.source for c in document.chapters for s in c.segments] == ["Saved paragraph"]
+    document.chapters[0].segments[0].target = "已保存的段落"
+    with closing(FileStorage(str(tmp_path / "state"))) as store:
+        store.init_from_document(document)
+        store.set_chapter_status(0, "done")
+        assemble(store, str(source), str(output), "html", bilingual=False, about_page=False)
+    rendered = output.read_text(encoding="utf-8")
+    assert "已保存的段落" in rendered
+    assert "Loose" in rendered
 
 
 def test_noteref_link_with_br_preserves_annotation_and_marker(tmp_path, monkeypatch):
