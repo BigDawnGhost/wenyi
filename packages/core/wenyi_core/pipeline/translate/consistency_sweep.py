@@ -2,9 +2,9 @@
 
 Closes the residual cross-chapter consistency gap of parallel chapter translation with:
 1. Book-wide glossary-miss detection across chapters, repaired via surgical sparse patches.
-2. Mid-frequency non-glossary term drift detection (statistical co-occurrence across
-   chapters to spot split renderings like 'retainer'/'adviser' or 'sovereign'/'king'),
-   adjudicated in one tiny call and repaired via surgical sparse patches.
+2. Drift detection for recurring titles the Book Bible flagged as divergent (statistical
+   co-occurrence across chapters to spot split English renderings like 'retainer'/'adviser'
+   or 'King'/'king'), adjudicated in one tiny call and repaired via surgical sparse patches.
 
 Repeated source paragraphs are never overwritten with an earlier chapter's translation:
 the same words can need a different rendering in a different scene (speaker, gender,
@@ -23,13 +23,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from ...agents.batch_risk import _is_generic, _target_contains_term
-from ...agents.book_bible import _CJK_EDGE_PARTICLES, _CJK_STOP_CHARS
 from ...agents.sparse_editor import SparseSemanticEditor
 from ...glossary.store import STATUS_OK, normalize_match_text, source_matches_text
-from ...i18n.languages import (
-    glossary_context_dependent_sources,
-    glossary_generic_target_words,
-)
+from ...i18n.languages import glossary_generic_target_words
 from ...models.document import Chapter, Segment
 from ...models.glossary import TYPE_NAVIGATION, GlossaryTerm
 from ...storage.protocol import Storage
@@ -107,251 +103,6 @@ _EN_STOPWORDS = frozenset(
     }
 )
 # High-frequency Chinese pronouns/particles/adverbs that never represent title/terminology drift.
-_ZH_NOISE_CHARS = frozenset("我你他她它这這那了的着著过過吗嗎呢吧啊哦嗯就也都很再又")
-_ZH_FUNCTION_BIGRAMS = frozenset(
-    {
-        "已经",
-        "已經",
-        "不是",
-        "没有",
-        "沒有",
-        "什么",
-        "什麼",
-        "怎么",
-        "怎麼",
-        "可以",
-        "因为",
-        "因為",
-        "所以",
-        "但是",
-        "如果",
-        "虽然",
-        "雖然",
-        "而且",
-        "或者",
-        "自己",
-        "时候",
-        "時候",
-        "只是",
-        "不过",
-        "不過",
-        "还是",
-        "還是",
-        "然后",
-        "然後",
-        "知道",
-        "觉得",
-        "覺得",
-        "看到",
-        "看见",
-        "看見",
-        "说道",
-        "說道",
-        "问道",
-        "問道",
-        "答道",
-        "笑道",
-        "心中",
-        "心里",
-        "心裡",
-        "如今",
-        "原来",
-        "原來",
-        "实在",
-        "實在",
-        "其实",
-        "其實",
-        "自然",
-        "当然",
-        "當然",
-        "应该",
-        "應該",
-        "必须",
-        "必須",
-        "一定",
-        "一点",
-        "一點",
-        "一下",
-        "一起",
-        "一样",
-        "一樣",
-        "一直",
-        "不能",
-        "不会",
-        "不會",
-        "不知",
-        "不敢",
-        "不想",
-        "不要",
-        "不得",
-        "无法",
-        "無法",
-    }
-)
-# Everyday Chinese vocabulary that dominates raw frequency on long books but whose split
-# renderings ("need"/"require", "chance"/"opportunity") are ordinary synonym choice, not drift.
-_ZH_EVERYDAY_GRAMS = frozenset(
-    {
-        "需要",
-        "电话",
-        "電話",
-        "手机",
-        "手機",
-        "离开",
-        "離開",
-        "希望",
-        "另外",
-        "立刻",
-        "马上",
-        "馬上",
-        "告诉",
-        "告訴",
-        "机会",
-        "機會",
-        "现在",
-        "現在",
-        "今天",
-        "明天",
-        "昨天",
-        "东西",
-        "東西",
-        "事情",
-        "地方",
-        "时间",
-        "時間",
-        "问题",
-        "問題",
-        "开始",
-        "開始",
-        "回来",
-        "回來",
-        "出来",
-        "出來",
-        "起来",
-        "起來",
-        "进来",
-        "進來",
-        "下来",
-        "下來",
-        "过去",
-        "過去",
-        "准备",
-        "準備",
-        "突然",
-        "忽然",
-        "终于",
-        "終於",
-        "刚才",
-        "剛才",
-        "似乎",
-        "好像",
-        "仿佛",
-        "彷彿",
-        "继续",
-        "繼續",
-        "决定",
-        "決定",
-        "发现",
-        "發現",
-        "感觉",
-        "感覺",
-        "认为",
-        "認為",
-        "喜欢",
-        "喜歡",
-        "帮助",
-        "幫助",
-        "回答",
-        "回头",
-        "回頭",
-        "点头",
-        "點頭",
-        "摇头",
-        "搖頭",
-        "声音",
-        "聲音",
-        "眼睛",
-        "身体",
-        "身體",
-        "房间",
-        "房間",
-        "门口",
-        "門口",
-        "朋友",
-        "孩子",
-        "女人",
-        "男人",
-        "非常",
-        "特别",
-        "特別",
-        "当时",
-        "當時",
-        "之后",
-        "之後",
-        "以后",
-        "以後",
-        "以前",
-        "一口",
-        "一切",
-        "一定",
-        "一般",
-        "夜里",
-        "夜裡",
-        "夜裏",
-        "屋里",
-        "屋裡",
-        "屋裏",
-        "家里",
-        "家裡",
-        "家裏",
-        "手里",
-        "手裡",
-        "手裏",
-        "眼里",
-        "眼裡",
-        "眼裏",
-        "嘴里",
-        "嘴裡",
-        "嘴裏",
-    }
-)
-# Structural determiner/locative boundary fragments that never form valid 3-char domain terms
-# (matched as 2-char substrings as well as exact matches, unlike everyday nouns like 手里/地方/朋友
-# which appear inside real 3-char compounds such as 手里剑, 地方官, 朋友圈).
-_ZH_DRIFT_FRAGMENT_SUBSTRINGS = frozenset(
-    {
-        "整个",
-        "整個",
-        "每个",
-        "每個",
-        "一个",
-        "一個",
-        "一些",
-        "一直",
-        "一起",
-        "一样",
-        "一樣",
-        "一下",
-        "一边",
-        "一邊",
-        "某个",
-        "某個",
-        "某些",
-        "间里",
-        "間裡",
-        "間裏",
-        "子里",
-        "子裡",
-        "子裏",
-    }
-)
-# Smooth monotonic document-frequency cap for non-watched n-grams across all book sizes:
-# an unglossed n-gram appearing in more than max(200, 1% of paragraphs) paragraphs is
-# everyday vocabulary rather than mid-frequency term drift.
-_DF_CAP_MIN_HITS = 200
-_DF_CAP_RATIO = 0.01
-
-# Irregular English inflections, as base -> other forms (pairs collapse to one target).
 _EN_IRREGULAR_FORMS: dict[str, tuple[str, ...]] = {
     "be": ("was", "were", "been", "being", "is", "are"),
     "do": ("did", "done", "does"),
@@ -534,15 +285,6 @@ def _same_en_lemma(left: str, right: str) -> bool:
     return bool(_en_lemma_candidates(a) & _en_lemma_candidates(b))
 
 
-def _is_everyday_gram(gram: str) -> bool:
-    """Return True for everyday vocabulary/fragments that never signal term drift."""
-    return (
-        gram in _ZH_EVERYDAY_GRAMS
-        or gram in _ZH_DRIFT_FRAGMENT_SUBSTRINGS
-        or any(gram[i : i + 2] in _ZH_DRIFT_FRAGMENT_SUBSTRINGS for i in range(len(gram) - 1))
-    )
-
-
 def _has_mid_sentence_capital(word: str, targets: Sequence[str]) -> bool:
     """Return True if ``word`` appears capitalized mid-sentence at least twice."""
     if not word:
@@ -574,25 +316,48 @@ def detect_mid_frequency_drift(
     *,
     source_lang: str,
     target_lang: str,
-    existing_glossary_sources: set[str],
-    min_hits: int = 4,
     max_clusters: int = 12,
     extra_watch_sources: Mapping[str, Sequence[str]] | None = None,
 ) -> list[DriftCluster]:
-    """Deterministically detect recurring non-glossary CJK terms with split English renderings."""
-    src_base = (source_lang or "").lower().split("-", 1)[0]
+    """Detect split English renderings of recurring titles the Book Bible flagged as divergent.
+
+    Only watched sources (``extra_watch_sources``: source -> the Bible's divergent probe
+    renderings) are checked, including ones that also have a glossary entry, since the glossary
+    pass cannot see a capitalization split or a generic title. When probe renderings are given,
+    a split must involve one of them, so co-occurring words such as "castle"/"palace" are never
+    reported for a title. Mining every source n-gram needed hand-curated per-language word lists
+    to filter noise, which only held for the books they were tuned on.
+    """
+    del source_lang  # Watched sources come from the Bible for any source language.
     tgt_base = (target_lang or "").lower().split("-", 1)[0]
-    if src_base != "zh" or tgt_base != "en" or max_clusters <= 0:
+    watch_map = extra_watch_sources or {}
+    if tgt_base != "en" or max_clusters <= 0 or not watch_map:
         return []
 
-    blocked = {
-        normalize_match_text(s).strip() for s in glossary_context_dependent_sources(source_lang)
+    watched = [src for src in watch_map if src.strip()]
+    # Anchor words are the content words of the probe renderings, the same kind of word a split
+    # can be made of. A title whose renderings have none (only "Sir"/"Don") cannot be checked.
+    anchors_by_source = {
+        src: {
+            _norm_en_word(word)
+            for rendering in watch_map[src]
+            for word in _EN_CONTENT_WORD_RE.findall(rendering or "")
+            if word.casefold() not in _EN_STOPWORDS
+        }
+        for src in watched
     }
-    norm_existing = {normalize_match_text(s).strip() for s in existing_glossary_sources}
-    watch_map = extra_watch_sources or {}
-    watched_norms = {normalize_match_text(s).strip() for s in watch_map}
 
-    # Index 2..3-char CJK noun-like terms occurring across >=2 chapters.
+    def is_anchor(gram: str, word: str) -> bool:
+        return any(_same_en_lemma(word, anchor) for anchor in anchors_by_source.get(gram, ()))
+
+    def anchored(gram: str, *words: str) -> bool:
+        # Without probe renderings (callers that only name the titles) every split counts.
+        # Otherwise every word of the split must be one the probes produced, so a rendering
+        # is never paired with scenery that happens to differ between chapters.
+        if not any(watch_map[gram]):
+            return True
+        return all(is_anchor(gram, word) for word in words)
+
     term_paras: dict[str, list[tuple[int, int, str]]] = defaultdict(list)
     term_chapters: dict[str, set[int]] = defaultdict(set)
     global_word_df: Counter[str] = Counter()
@@ -612,50 +377,20 @@ def detect_mid_frequency_drift(
             }
             for w in words:
                 global_word_df[w] += 1
-
-            seen_grams: set[str] = set()
-            for chunk in re.findall(r"[\u3400-\u9fff\uf900-\ufaff]{2,}", src):
-                clen = len(chunk)
-                for n in (2, 3):
-                    if clen < n:
-                        continue
-                    for start in range(clen - n + 1):
-                        gram = chunk[start : start + n]
-                        if (
-                            gram in seen_grams
-                            or gram in _ZH_FUNCTION_BIGRAMS
-                            or gram[0] in _CJK_EDGE_PARTICLES
-                            or gram[-1] in _CJK_EDGE_PARTICLES
-                            or any(c in _ZH_NOISE_CHARS for c in gram)
-                            or all(c in _CJK_STOP_CHARS for c in gram)
-                        ):
-                            continue
-                        norm = normalize_match_text(gram).strip()
-                        if norm not in watched_norms and (
-                            norm in blocked
-                            or _is_everyday_gram(gram)
-                            or norm in norm_existing
-                            or any(norm in ex for ex in norm_existing)
-                        ):
-                            continue
-                        seen_grams.add(gram)
-                        term_paras[gram].append((ch.index, seg_idx, tgt))
-                        term_chapters[gram].add(ch.index)
+            for gram in watched:
+                if source_matches_text(gram, src):
+                    term_paras[gram].append((ch.index, seg_idx, tgt))
+                    term_chapters[gram].add(ch.index)
 
     if total_paras < 10:
         return []
 
-    # Ranked as (not watched, no title signal, -split quality, -hits, -len, source).
-    ranked: list[tuple[tuple[bool, bool, float, int, int, str], DriftCluster]] = []
+    # Ranked as (no title signal, -split quality, -hits, -len, source).
+    ranked: list[tuple[tuple[bool, float, int, int, str], DriftCluster]] = []
     for gram, occurrences in term_paras.items():
-        is_watched = normalize_match_text(gram).strip() in watched_norms
-        if len(occurrences) < (3 if is_watched else min_hits) or len(term_chapters[gram]) < 2:
+        if len(occurrences) < 3 or len(term_chapters[gram]) < 2:
             continue
         n_occ = len(occurrences)
-        if not is_watched:
-            max_hits = max(_DF_CAP_MIN_HITS, int(total_paras * _DF_CAP_RATIO))
-            if n_occ > max_hits:
-                continue
         # Score distinctive target words that co-occur strongly with this source n-gram.
         occ_words = [
             {
@@ -686,7 +421,7 @@ def detect_mid_frequency_drift(
             lemma_df[r] += global_word_df[word]
 
         distinctive: list[tuple[str, int]] = []
-        min_lift = 1.15 if is_watched else 1.35
+        min_lift = 1.15
         for word, cnt in sorted(lemma_counts.items(), key=lambda kv: (-kv[1], reps.index(kv[0]))):
             share = cnt / n_occ
             base_rate = min(lemma_df[word], total_paras) / total_paras
@@ -698,7 +433,10 @@ def detect_mid_frequency_drift(
             ):
                 distinctive.append((word, cnt))
 
-        if len(distinctive) >= 2:
+        # Prefer words the probes produced, so a real king/monarch split outranks co-occurring
+        # scenery such as castle/palace.
+        distinctive.sort(key=lambda item: not is_anchor(gram, item[0]))
+        if len(distinctive) >= 2 and anchored(gram, distinctive[0][0], distinctive[1][0]):
             # Check mutual exclusivity of top two distinctive target words (split rendering signal!).
             (w1, c1), (w2, c2) = distinctive[0], distinctive[1]
             both = sum(1 for lemmas in lemma_sets if w1 in lemmas and w2 in lemmas)
@@ -715,7 +453,7 @@ def detect_mid_frequency_drift(
                 )
                 ranked.append(
                     (
-                        (not is_watched, not titled, -quality, -n_occ, -len(gram), gram),
+                        (not titled, -quality, -n_occ, -len(gram), gram),
                         DriftCluster(
                             source=gram,
                             total_hits=n_occ,
@@ -728,9 +466,9 @@ def detect_mid_frequency_drift(
 
         # For watched recurring titles, also catch mid-sentence capitalization splits
         # (e.g. "the King" in Ch 1 vs "the king" in Ch 2) that case-folding hides.
-        if is_watched and word_counts:
+        if word_counts:
             top_word, top_cnt = word_counts.most_common(1)[0]
-            if top_cnt >= 3 and (top_cnt / n_occ) >= 0.40:
+            if top_cnt >= 3 and (top_cnt / n_occ) >= 0.40 and anchored(gram, top_word):
                 cap_hits = 0
                 low_hits = 0
                 cap_chs: set[int] = set()
@@ -756,7 +494,6 @@ def detect_mid_frequency_drift(
                         (
                             (
                                 False,
-                                False,
                                 -cap_quality,
                                 -n_occ,
                                 -len(gram),
@@ -774,8 +511,7 @@ def detect_mid_frequency_drift(
                         )
                     )
 
-    # Watched titles first, then proper-noun/title splits, then highest-evidence balanced
-    # splits; drop overlapping fragments of the same phrase sharing the same competing targets.
+    # Proper-noun/title splits first, then highest-evidence balanced splits; drop overlapping fragments of the same phrase sharing the same competing targets.
     ranked.sort(key=lambda item: item[0])
     selected: list[tuple[DriftCluster, frozenset[str], frozenset[tuple[int, int]]]] = []
     for _key, cluster in ranked:
@@ -824,12 +560,19 @@ class ConsistencySweepService:
         protected_by_ch = {ch.index: _protected_segment_ids(ch) for ch in chapters}
         modified_chapters: set[int] = set()
 
+        # Entries under dispute (an open conflict) are the user's to resolve; neither pass
+        # rewrites text toward either side.
+        disputed = {
+            normalize_match_text(str(c.get("source") or "")).strip() for c in store.open_conflicts()
+        }
+
         # 1. Book-wide glossary miss sweep (surgical sparse patches for missed canonical terms).
         generic_words = glossary_generic_target_words(self._tgt)
         entity_terms = [
             t
             for t in terms
             if t.status == STATUS_OK
+            and normalize_match_text(t.source).strip() not in disputed
             and t.type in {"person", "place", "organization", "term"}
             and len(t.source.strip()) >= 2
             and len(t.target.strip()) >= 2
@@ -900,22 +643,38 @@ class ConsistencySweepService:
             chapters,
             source_lang=self._src,
             target_lang=self._tgt,
-            existing_glossary_sources={t.source for t in terms if t.type != TYPE_NAVIGATION},
             extra_watch_sources=divergent_titles,
         )
         drift_patched = 0
         drift_decisions: dict[str, str] = {}
-        if drift_clusters:
-            drift_decisions = self._editor.adjudicate_drift(
-                [
-                    {
-                        "source": c.source,
-                        "targets": list(c.competing_targets),
-                    }
-                    for c in drift_clusters
-                ],
-                style=style,
-                conventions=conventions,
+        # A glossary entry decides its own rendering: an active one pins the decision to its
+        # target, and one under dispute (an open conflict or a non-OK status) is left to the user.
+        glossary_by_source = {
+            normalize_match_text(t.source).strip(): t for t in terms if t.type != TYPE_NAVIGATION
+        }
+        to_adjudicate: list[DriftCluster] = []
+        for cluster in drift_clusters:
+            key = normalize_match_text(cluster.source).strip()
+            entry = glossary_by_source.get(key)
+            if key in disputed or (entry is not None and entry.status != STATUS_OK):
+                continue
+            if entry is not None and entry.target.strip():
+                drift_decisions[cluster.source] = entry.target.strip()
+            else:
+                to_adjudicate.append(cluster)
+        if to_adjudicate:
+            drift_decisions.update(
+                self._editor.adjudicate_drift(
+                    [
+                        {
+                            "source": c.source,
+                            "targets": list(c.competing_targets),
+                        }
+                        for c in to_adjudicate
+                    ],
+                    style=style,
+                    conventions=conventions,
+                )
             )
         if drift_decisions:
             drift_items: list[tuple[Chapter, Segment, GlossaryTerm]] = []

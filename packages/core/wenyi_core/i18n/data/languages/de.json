@@ -1,6 +1,11 @@
 {
   "label": "German",
   "english_name": "German",
+  "inline_gloss_markers": [
+    "wörtl.",
+    "wörtlich",
+    "Anm. d. Ü."
+  ],
   "source_guidance": "Interpret German clause structure, case, grammatical gender and du/Sie. Distinguish grammatical forms from facts about ${genre_people_label}.",
   "target_guidance": "Use natural German with consistent case, verb placement, noun capitalization and relationship register in du/Sie.",
   "punctuation_rule": "Follow German quotation, punctuation and spacing conventions. Preserve umlauts, ß and symbol pairing.",

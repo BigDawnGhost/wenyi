@@ -17,10 +17,10 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from ..ingest.segmenter import verse_block_indices
 from ..llm.json_parser import JsonParseError
 from ..llm.preflight import fit_prompt_to_context_window
 from ..llm.retrying import TruncatedResponseError, is_resumable_provider_interrupt
@@ -78,13 +78,35 @@ class SparseEditResult:
     failed: bool = False
 
 
+# Scripts written without spaces between words (Chinese, Japanese, Thai, Lao, Khmer, Burmese)
+# have no word boundaries, so each character counts as one token; otherwise a whole clause
+# would be a single "word" and any edit to it would look like a rewrite. Korean is spaced.
+_UNSPACED = (
+    "\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\u0e00-\u0e7f\u0e80-\u0eff\u1000-\u109f\u1780-\u17ff"
+)
+_TOKEN_PIECE_RE = re.compile(rf"[{_UNSPACED}]|[^{_UNSPACED}]+")
+_UNSPACED_CHAR_RE = re.compile(rf"[{_UNSPACED}]")
+
+
+def _content_tokens(text: str) -> list[str]:
+    tokens: list[str] = []
+    for word in _WORD_RE.findall(text):
+        for piece in _TOKEN_PIECE_RE.findall(word):
+            tokens.append(piece if _UNSPACED_CHAR_RE.match(piece) else piece.casefold())
+    return tokens
+
+
 def _token_overlap_ratio(a: str, b: str) -> float:
-    """Return Jaccard overlap of content tokens (used to guard against gratuitous style churn)."""
-    ta = {w.casefold() for w in _WORD_RE.findall(a)}
-    tb = {w.casefold() for w in _WORD_RE.findall(b)}
+    """Return count-aware overlap of content tokens (guards against gratuitous style churn).
+
+    Counting repeats matters for per-character tokens: a large deletion keeps a small subset
+    of the same characters, which a set comparison would score as nearly identical.
+    """
+    ta = Counter(_content_tokens(a))
+    tb = Counter(_content_tokens(b))
     if not ta or not tb:
         return 1.0
-    return len(ta & tb) / max(len(ta), len(tb))
+    return sum((ta & tb).values()) / max(sum(ta.values()), sum(tb.values()))
 
 
 def _is_gratuitous_style_churn(draft: str, candidate: str, reason: str) -> bool:
@@ -92,7 +114,7 @@ def _is_gratuitous_style_churn(draft: str, candidate: str, reason: str) -> bool:
     low_reason = reason.casefold()
     if any(tok in low_reason for tok in _HEAVY_REWRITE_REASON_TOKENS):
         return False
-    draft_words = _WORD_RE.findall(draft)
+    draft_words = _content_tokens(draft)
     if len(draft_words) < 20:
         return False
     # If the model changed >65% of words for a purely stylistic/unspecified tweak, keep the draft.
@@ -196,18 +218,8 @@ class SparseSemanticEditor(Agent):
         paired_block = "\n\n".join(pairs_lines)
         next_ref = prompts.render_source_reference(next_source)
 
+        # Unlineated verse already arrives as a pre-screen alert from ``assess_batch_risk``.
         alert_blocks: list[str] = []
-        verse_indices = verse_block_indices(src_list)
-        unlineated_verse = [
-            idx
-            for idx, (_src, tgt) in enumerate(zip(src_list, draft_list))
-            if idx in verse_indices and tgt.strip() and "\n" not in tgt
-        ]
-        if unlineated_verse:
-            alert_blocks.append(
-                f"[Verse formatting alert] Paragraphs {unlineated_verse} are verse lines "
-                "drafted without line breaks. Emit patches splitting each verse line/couplet with '\\n'."
-            )
         risk_alert_text = risk.format_prompt_alerts(max_items=6)
         if risk_alert_text:
             alert_blocks.append(risk_alert_text)

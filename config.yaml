@@ -53,7 +53,7 @@ pipeline:
   polish_concurrency: 1
   # Zero-cost post-translation repair of leaked newline escapes; never rewrites punctuation or names.
   deterministic_hygiene: true
-  # Fast post-translation cross-chapter sweep: patches missed glossary terms and confirmed title drift.
+  # Fast post-translation cross-chapter sweep: patches missed glossary terms; title drift needs compiled mode.
   consistency_sweep: false
   # Experimental: replace unambiguous high-stability proper nouns with opaque ⟦N#⟧ markers during drafting.
   entity_markers: false

@@ -1064,7 +1064,6 @@ class BookBibleAgent(Agent):
                     {"role": "user", "content": user},
                 ],
                 operation="translation.body",
-                thinking_boost=1,
             )
         except Exception as exc:  # noqa: BLE001 - optional voice anchor; chapters still translate.
             if is_resumable_provider_interrupt(exc):

@@ -331,8 +331,7 @@ def test_consistency_sweep_keeps_repeated_paragraphs_and_detects_mid_freq_drift(
         [ch0, ch1],
         source_lang="zh",
         target_lang="en",
-        existing_glossary_sources=set(),
-        min_hits=5,
+        extra_watch_sources={"幕僚": ("the adviser", "the retainer")},
     )
     assert any(c.source == "幕僚" for c in clusters)
 
@@ -590,10 +589,11 @@ def test_book_bible_captures_divergent_titles_and_compiles_voice_exemplars():
         conventions=res.conventions,
     )
     assert len(exemplars) == 2
-    assert fake.calls[-1]["thinking_boost"] == 1
+    # Voice exemplars use the configured translation.body effort; no silent escalation.
+    assert fake.calls[-1]["thinking_boost"] == 0
 
 
-def test_consistency_sweep_filters_function_noise_and_patches_confirmed_title_drift(tmp_path):
+def test_consistency_sweep_patches_confirmed_title_drift(tmp_path):
     from wenyi_core.storage.file import FileStorage
 
     store = FileStorage(str(tmp_path), create=True)
@@ -640,13 +640,10 @@ def test_consistency_sweep_filters_function_noise_and_patches_confirmed_title_dr
         [ch0, ch1],
         source_lang="zh",
         target_lang="en",
-        existing_glossary_sources=set(),
         extra_watch_sources={"国主": ("the sovereign", "the king")},
     )
     cluster_sources = {c.source for c in clusters}
     assert "国主" in cluster_sources
-    # Chinese adverb noise must be ignored.
-    assert "已经" not in cluster_sources
 
     def handler(messages, operation, json_mode):
         sys_msg = messages[0]["content"]
@@ -747,7 +744,6 @@ def test_consistency_sweep_catches_and_patches_watched_title_casing_split(tmp_pa
         [ch0, ch1],
         source_lang="zh",
         target_lang="en",
-        existing_glossary_sources=set(),
         extra_watch_sources={"国主": ("the King",)},
     )
     assert any(

@@ -335,68 +335,6 @@ def test_upsert_promotes_navigation_stub_to_entity_type(tmp_path):
         store.close()
 
 
-def test_consistency_sweep_drift_not_suppressed_by_navigation_title(tmp_path):
-    from wenyi_core.pipeline.translate.consistency_sweep import ConsistencySweepService
-
-    store = FileStorage(str(tmp_path / "state"))
-    try:
-        filler = [
-            Segment(
-                index=i,
-                source=f"夜风拂过石阶第{i}段。",
-                target=f"Night wind crossed stone step {i}.",
-            )
-            for i in range(2, 8)
-        ]
-        chapters = [
-            Chapter(
-                index=0,
-                title="Ch0",
-                segments=[
-                    Segment(index=0, source="公爵走进大厅。", target="The Duke entered the hall."),
-                    Segment(index=1, source="公爵微微点头。", target="The Duke nodded slightly."),
-                    *filler,
-                ],
-            ),
-            Chapter(
-                index=1,
-                title="Ch1",
-                segments=[
-                    Segment(
-                        index=0, source="公爵转身离开。", target="The Marquess turned and left."
-                    ),
-                    Segment(
-                        index=1, source="公爵再次开口。", target="The Marquess spoke once more."
-                    ),
-                    *filler,
-                ],
-            ),
-        ]
-        manifest = store.stage_document(
-            Document(
-                source_lang="zh",
-                target_lang="en",
-                fmt="epub",
-                chapters=chapters,
-            ),
-            source_hash="c" * 64,
-        )
-        store.save_manifest(manifest)
-        editor = Mock()
-        editor.adjudicate_drift.return_value = {}
-        svc = ConsistencySweepService(editor, source_lang="zh", target_lang="en")
-        svc.run(
-            store,
-            chapter_indices=[0, 1],
-            terms=[_nav("第12章 公爵的密信", "Chapter 12: The Secret Letter")],
-        )
-        assert editor.adjudicate_drift.called
-        clusters = editor.adjudicate_drift.call_args.args[0]
-        assert any(c["source"] == "公爵" for c in clusters)
-    finally:
-        store.close()
-
-
 def test_glossary_extractor_excludes_navigation_terms_from_existing(tmp_path):
     from wenyi_core.agents.glossary_extractor import GlossaryExtractor
 

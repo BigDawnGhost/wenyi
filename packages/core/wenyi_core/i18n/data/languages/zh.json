@@ -1,6 +1,12 @@
 {
   "label": "Simplified Chinese",
   "english_name": "Simplified Chinese",
+  "inline_gloss_markers": [
+    "直译",
+    "字面意思",
+    "译注",
+    "译者注"
+  ],
   "source_guidance": "Interpret Chinese ellipsis, contextual references and the relationship information carried by kinship terms.",
   "glossary_context_dependent_sources": [
     "孤",

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from ..glossary.store import STATUS_OK, normalize_match_text, source_matches_normalized
-from ..i18n.languages import glossary_generic_target_words
+from ..i18n.languages import glossary_generic_target_words, inline_gloss_markers
 from ..ingest.segmenter import verse_block_indices
 from ..models.glossary import GlossaryTerm
 
@@ -29,7 +29,6 @@ _CJK_CHAR_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
 _KANA_CHAR_RE = re.compile(r"[\u3040-\u30ff]")
 _FURIGANA_RESIDUE_RE = re.compile(r"〘(?!object:)[^〙]+〙")
 _WORD_RE = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)*")
-_PAREN_GLOSS_RE = re.compile(r"\((?:lit\.|literally|i\.e\.|meaning|a |the )?[^()]{4,60}\)")
 _HALFWIDTH_IN_CJK_RE = re.compile(r"[\u4e00-\u9fff][,?!;:][\u4e00-\u9fff]")
 
 # Embedded classical/literary poem/lyric signals inside a prose paragraph.
@@ -41,11 +40,10 @@ _EMBEDDED_ZH_VERSE_RE = re.compile(
     r"声声慢|聲聲慢|如梦令|如夢令|浪淘沙|江城子|青玉案|定风波|定風波)》|"
     r"(?:诗曰|詩曰|词曰|詞曰|偈曰|赞曰|讚曰|歌曰|有诗为证|有詩為證|(?<![沉吟呻])吟道|唱道)[：:，,]?\s*[「『“\"])"
 )
+# Only explicit poetry words introduce verse; "it was written" (記されていた) or a quote with
+# spaces in it (「New York Times」) is ordinary prose.
 _EMBEDDED_JA_VERSE_RE = re.compile(
-    r"(?:短歌|俳句|和歌|詠んだ|歌った|記されていた)[^「『]{0,24}[「『][^」』]{12,60}[」』]"
-)
-_JA_TANKA_QUOTE_RE = re.compile(
-    r"[「『][^」』\n]{3,10}[\s　]+[^」』\n]{4,10}[\s　]+[^」』\n]{3,10}[」』]"
+    r"(?:短歌|俳句|和歌|詠んだ|歌った)[^「『]{0,24}[「『][^」』]{12,60}[」』]"
 )
 
 # Pure Chinese numeral glossary names (e.g. 十一 -> Eleven) should not match inside chapter
@@ -53,12 +51,7 @@ _JA_TANKA_QUOTE_RE = re.compile(
 _ZH_NUMERAL_ONLY_RE = re.compile(r"^[零〇一二三四五六七八九十百千万萬亿億两兩]+$")
 _ZH_NUMERAL_LEFT_BOUNDARY = frozenset("第零〇一二三四五六七八九十百千万萬亿億两兩")
 _ZH_NUMERAL_RIGHT_BOUNDARY = frozenset(
-    "零〇一二三四五六七八九十百千万萬亿億章节節卷集篇幕年月日天时時分秒点點岁歲个個名位人件条條次遍倍成斤两兩米尺丈里元块塊钱錢"
-)
-# Common characters forming return/reply verb compounds after 回 (e.g. 十一回头 / 十一回到),
-# distinguishing character-name subjects from counts like 十一回才找到 or 十一回合.
-_ZH_HUI_VERB_NEXT = frozenset(
-    "头頭到来來去答回应應复復覆身望忆憶想首眸道话話礼禮敬绝絕看转轉返归歸神"
+    "零〇一二三四五六七八九十百千万萬亿億章节節卷集篇幕年月日天时時分秒点點岁歲个個名位人件条條次遍倍成斤两兩米尺丈里元块塊钱錢回"
 )
 
 
@@ -78,13 +71,45 @@ class BatchRiskReport:
         """Render a compact, bounded pre-screen hint block for ``SparseSemanticEditor``."""
         if not self.alerts:
             return ""
-        # Prioritize high-severity alerts first, keeping original paragraph order within ties.
-        ranked = sorted(self.alerts, key=lambda a: (not a.high_severity, a.index))[:max_items]
+        # The grouped verse alert names a whole poem's paragraphs and has no other carrier, so it
+        # always keeps a slot; the rest are ranked high-severity first, in paragraph order.
+        reserved = [a for a in self.alerts if a.code == "unlineated_verse"][: max(0, max_items)]
+        others = [a for a in self.alerts if a.code != "unlineated_verse"]
+        ranked = (
+            sorted(others, key=lambda a: (not a.high_severity, a.index))[
+                : max(0, max_items - len(reserved))
+            ]
+            + reserved
+        )
+        if not ranked:
+            return ""
         ranked.sort(key=lambda a: a.index)
         lines = ["[Pre-screen alerts — verify these specific paragraphs carefully before deciding]"]
         for alert in ranked:
             lines.append(f"- [{alert.index}] ({alert.code}): {alert.detail}")
         return "\n".join(lines)
+
+
+@lru_cache(maxsize=64)
+def _inline_gloss_re(target_lang: str) -> re.Pattern[str] | None:
+    """Match a translator's note opened by the target language's own marker ("(lit. ...)").
+
+    A plain parenthetical is ordinary prose in many styles (a dash aside rendered with
+    parentheses, an academic gloss), so only an explicit marker counts. A marker must end at a
+    word boundary, so "(meaningful ...)" is not a note.
+    """
+    markers = inline_gloss_markers(target_lang)
+    if not markers:
+        return None
+
+    def marker_pattern(marker: str) -> str:
+        # Spaced scripts need a word boundary after the marker; unspaced scripts have none.
+        last = marker[-1]
+        bounded = last.isalpha() and not _CJK_CHAR_RE.match(last) and not _KANA_CHAR_RE.match(last)
+        return re.escape(marker) + (r"(?!\w)" if bounded else "")
+
+    alternatives = "|".join(marker_pattern(m) for m in sorted(markers, key=len, reverse=True))
+    return re.compile(rf"[(（]\s*(?:{alternatives})[^()（）]{{1,80}}[)）]", re.IGNORECASE)
 
 
 def _strip_protected(text: str) -> str:
@@ -211,7 +236,7 @@ def has_embedded_verse(source: str, *, source_lang: str) -> bool:
     if base == "zh":
         return bool(_EMBEDDED_ZH_VERSE_RE.search(source))
     if base == "ja":
-        return bool(_EMBEDDED_JA_VERSE_RE.search(source) or _JA_TANKA_QUOTE_RE.search(source))
+        return bool(_EMBEDDED_JA_VERSE_RE.search(source))
     return False
 
 
@@ -234,14 +259,7 @@ def _glossary_source_matches(term_source: str, norm_text: str, *, src_base: str)
         if end >= len(norm_text):
             right_ok = True
         else:
-            next_ch = norm_text[end]
-            if next_ch in _ZH_NUMERAL_RIGHT_BOUNDARY:
-                right_ok = False
-            elif next_ch == "回":
-                after_hui = norm_text[end + 1] if end + 1 < len(norm_text) else ""
-                right_ok = after_hui in _ZH_HUI_VERB_NEXT
-            else:
-                right_ok = True
+            right_ok = norm_text[end] not in _ZH_NUMERAL_RIGHT_BOUNDARY
         if left_ok and right_ok:
             return True
         start = pos + 1
@@ -261,6 +279,7 @@ def assess_batch_risk(
     src_base = (source_lang or "").lower().split("-", 1)[0]
     tgt_base = (target_lang or "").lower().split("-", 1)[0]
     generic_words = glossary_generic_target_words(target_lang)
+    gloss_re = _inline_gloss_re(target_lang)
     variants_map = variants_by_source or {}
 
     # Filter glossary terms to high-signal entity mappings for miss detection. Navigation
@@ -341,7 +360,12 @@ def assess_batch_risk(
             )
 
         # 2. Unrequested parenthetical gloss (when source has no parentheses)
-        if "(" not in src and "（" not in src and _PAREN_GLOSS_RE.search(clean_drf):
+        if (
+            gloss_re is not None
+            and "(" not in src
+            and "（" not in src
+            and gloss_re.search(clean_drf)
+        ):
             alerts.append(
                 ParagraphAlert(
                     idx,

@@ -1,6 +1,15 @@
 {
   "label": "English",
   "english_name": "English",
+  "inline_gloss_markers": [
+    "lit.",
+    "literally",
+    "meaning",
+    "which means",
+    "translator's note",
+    "translator’s note",
+    "TN:"
+  ],
   "source_guidance": "Interpret English tense, relative clauses and implicit references. Brother/sister alone does not establish relative age, and a form of address does not establish kinship.",
   "glossary_generic_target_words": [
     "a",

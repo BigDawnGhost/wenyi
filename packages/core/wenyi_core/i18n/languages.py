@@ -101,6 +101,19 @@ def glossary_generic_target_words(code: str) -> frozenset[str]:
     )
 
 
+@lru_cache(maxsize=64)
+def inline_gloss_markers(code: str) -> tuple[str, ...]:
+    """Return the words a translator uses to open an inline note, like English "(lit. ...".
+
+    A language without markers gets no inline-gloss alert: a plain parenthetical is ordinary
+    prose in many styles, so only an explicit note counts as an inserted gloss.
+    """
+    if not normalize_language(code):
+        return ()
+    values = profile(code).get("inline_gloss_markers", [])
+    return tuple(value.strip() for value in values if isinstance(value, str) and value.strip())
+
+
 def label(code: str) -> str:
     return profile(code)["label"] if normalize_language(code) else "the source language"
 

@@ -75,7 +75,7 @@ pipeline:
   polish_concurrency: 1
   # Zero-cost post-translation repair of leaked newline escapes; never rewrites punctuation or names.
   deterministic_hygiene: true
-  # Fast post-translation cross-chapter sweep: patches missed glossary terms and confirmed title drift.
+  # Fast post-translation cross-chapter sweep: patches missed glossary terms; title drift needs compiled mode.
   consistency_sweep: false
   # Experimental: replace unambiguous high-stability proper nouns with opaque ⟦N#⟧ markers during drafting.
   entity_markers: false
@@ -199,7 +199,7 @@ class PipelineConfig(BaseModel):
     polish_concurrency: int = Field(default=1, ge=1)
     # Repair leaked newline escapes (no model calls); punctuation and names are never rewritten.
     deterministic_hygiene: bool = True
-    # Fast post-translation cross-chapter sweep (missed glossary terms + confirmed title drift).
+    # Fast cross-chapter sweep: missed glossary terms, plus Book Bible title drift in compiled mode.
     consistency_sweep: bool = False
     # Experimental: transport stable proper nouns as opaque ⟦N#⟧ markers during drafting.
     entity_markers: bool = False
