@@ -67,21 +67,11 @@ def register_glossary_commands(app: typer.Typer, context: ContextAccessor) -> No
             if not conflicts:
                 console.print("No unresolved glossary conflicts.")
                 return
-            counts: dict[str, int] = {}
             for conflict in conflicts:
-                counts[conflict["source"]] = counts.get(conflict["source"], 0) + 1
-            ordered = sorted(
-                conflicts,
-                key=lambda item: (-counts.get(item["source"], 1), item.get("id", 0)),
-            )
-            console.print(f"Unresolved glossary conflicts: {len(ordered)} ({len(counts)} terms)")
-            for conflict in ordered:
-                freq = counts[conflict["source"]]
-                suffix = f" [x{freq}]" if freq > 1 else ""
                 console.print(
-                    f"  {conflict['source']}{suffix}: existing “{conflict['existing_target']}” vs "
+                    f"  {conflict['source']}: existing “{conflict['existing_target']}” vs "
                     f"proposed “{conflict['proposed_target']}”"
-                    f" (chapter {conflict['chapter']})"
+                    f"(chapter {conflict['chapter']})"
                 )
         finally:
             glossary.close()
@@ -91,22 +81,13 @@ def register_glossary_commands(app: typer.Typer, context: ContextAccessor) -> No
         input: str = typer.Argument(..., help="Source file with existing translation state"),
         source: str = typer.Argument(..., help="Source term to resolve"),
         target: str = typer.Argument(
-            ..., help="Target translation (or ' | '-separated senses for --context-dependent)"
-        ),
-        context_dependent: bool = typer.Option(
-            False,
-            "--context-dependent",
-            help="Mark the term as context-dependent guidance rather than a fixed translation",
+            ..., help="Target translation to use consistently from now on"
         ),
     ) -> None:
         """Resolve an existing term to a chosen translation and close its conflicts."""
         console = context().console
         from wenyi_core.glossary import resolver
-        from wenyi_core.glossary.store import (
-            STATUS_CONTEXT_DEPENDENT,
-            STATUS_OK,
-            GlossaryStore,
-        )
+        from wenyi_core.glossary.store import GlossaryStore
 
         config = context().load_config()
         store = runstore_for_cli(config, input, console=console)
@@ -115,11 +96,9 @@ def register_glossary_commands(app: typer.Typer, context: ContextAccessor) -> No
             raise typer.Exit(1)
         glossary = GlossaryStore(store.glossary_path)
         try:
-            status = STATUS_CONTEXT_DEPENDENT if context_dependent else STATUS_OK
-            if not resolver.resolve(glossary, source, target, status=status):
+            if not resolver.resolve(glossary, source, target):
                 console.print(f"[red]Term does not exist: {source}[/]")
                 raise typer.Exit(1)
-            label = " (context-dependent)" if context_dependent else ""
-            console.print(f"Resolved {source} → {target}{label}")
+            console.print(f"Resolved {source} → {target}")
         finally:
             glossary.close()

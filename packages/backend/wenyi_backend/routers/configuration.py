@@ -167,8 +167,6 @@ def workflow(pid: str) -> dict:
             add("translation")
             add("polish", pipeline.get("polish"))
             add("annotation_alignment", pipeline.get("annotation_alignment"))
-            if kind == "translation" and pipeline.get("consistency_sweep"):
-                add("consistency_sweep", True)
         if kind in {"translation", "review"}:
             review = kind == "review" or pipeline.get("review", False)
             autofix = params.get("autofix")

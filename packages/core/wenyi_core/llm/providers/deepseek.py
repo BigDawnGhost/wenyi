@@ -45,9 +45,9 @@ class DeepSeekOptions(BaseModel):
     extra_body: dict[str, Any] = Field(default_factory=dict)
 
 
-# Glossary extraction reads names off a finished translation; low effort suffices and
-# takes far less time than high.
-PRESET_THINKING = {"glossary.extract": "low"}
+# Glossary extraction and initial review scanning run across every batch/chapter; low
+# thinking keeps them fast and cheap while leaving review fixes/arbitration at full effort.
+PRESET_THINKING = {"glossary.extract": "low", "review.scan": "low"}
 
 
 def preset_model() -> ResolvedModel[DeepSeekOptions]:

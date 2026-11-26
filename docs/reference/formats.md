@@ -80,11 +80,8 @@ the [bilingual-output rules](#naming-and-bilingual-output).
 Single-language and bilingual EPUBs both use the translated book title when
 available, with the original title kept in the package metadata. Without a
 translated title, the book title keeps the `-wenyi-<language>` suffix (`-bi` for
-bilingual output). Subject tags, author names and the table-of-contents page heading
-captured on import use saved translations where available; the description stays in
-the source metadata. When the package declares a language, it switches to the
-target language, and untranslated metadata that inherited it gets an explicit
-source-language tag. A page title
+bilingual output). Subject tags captured on import use saved translations where
+available; the author and description stay in the source metadata. A page title
 uses the translated table-of-contents entry for the whole page first, or the
 translated chapter title when that chapter and page correspond one-to-one.
 

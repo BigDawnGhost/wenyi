@@ -23,12 +23,7 @@ from wenyi_core.markup.segments import annotate_epub_resource
 from wenyi_core.models.document import Chapter, Segment
 from wenyi_core.pipeline.annotate.annotations import AnnotationService
 from wenyi_core.pipeline.prepare.epub_objects import refresh_epub_objects
-from wenyi_core.pipeline.prepare.input_preparation import (
-    EPUB_INGEST_SCHEMA,
-    ingest_config,
-    load_parsed_document,
-    parse_document,
-)
+from wenyi_core.pipeline.prepare.input_preparation import ingest_config, load_parsed_document
 from wenyi_core.pipeline.run.runtime import PipelineRuntime
 from wenyi_core.pipeline.translate.translation_batch import BatchPlan, TranslationBatchExecutor
 from wenyi_core.storage.file import FileStorage
@@ -452,33 +447,6 @@ def test_old_parsed_cache_is_not_used_to_initialize_object_blind_state(tmp_path)
         },
     )
     assert load_parsed_document(store, str(path), config) is None
-
-
-def test_parsed_cache_from_older_epub_reader_is_reparsed(tmp_path):
-    path = tmp_path / "source.epub"
-    write_epub(path)
-    doc = read_epub(str(path), "en", "zh")
-    config = Config.from_dict({"llm": {"preset": "fake"}})
-    _, store, _ = service(tmp_path, lambda *_: pytest.fail("Parsing is model-free"))
-    manifest = store.stage_document(doc)
-    store.save_manifest(manifest)
-    cache = {
-        "source_sha256": manifest["source_sha256"],
-        "ingest_config": ingest_config(config),
-        "document": doc.model_dump(mode="json"),
-    }
-    store.write_artifact("parsed_document.json", cache)
-    assert load_parsed_document(store, str(path), config) is not None
-
-    # A pre-upgrade cache lacks creators and navigation labels. Read-only views keep using it,
-    # while a parse run refreshes it from the source.
-    cache["document"]["meta"]["epub_schema"] = 5
-    store.write_artifact("parsed_document.json", cache)
-    assert load_parsed_document(store, str(path), config) is not None
-    reparsed = parse_document(store, str(path), config)
-    assert reparsed.meta["epub_schema"] == EPUB_INGEST_SCHEMA
-    refreshed = load_parsed_document(store, str(path), config)
-    assert refreshed is not None and refreshed.meta["epub_schema"] == EPUB_INGEST_SCHEMA
 
 
 def test_unclosed_marker_failure_does_not_discard_valid_sibling(tmp_path):

@@ -13,7 +13,7 @@ from typing import Any
 
 from ...agents.analyzer import Analyzer
 from ...agents.annotation_aligner import AnnotationAligner
-from ...agents.book_bible import BookBibleAgent
+from ...agents.cjk_seed import CjkGlossarySeeder
 from ...agents.glossary_extractor import GlossaryExtractor
 from ...agents.polisher import Polisher
 from ...agents.reviewer import Reviewer
@@ -72,7 +72,7 @@ class PipelineRuntime:
         self.polisher = Polisher(self.client, config)
         self.sparse_editor = SparseSemanticEditor(self.client, config)
         self.extractor = GlossaryExtractor(self.client, config)
-        self.book_bible = BookBibleAgent(self.client, config)
+        self.cjk_seeder = CjkGlossarySeeder(self.client, config)
         self.annotation_aligner = AnnotationAligner(self.client, config)
 
     def require_glossary_note_access(self) -> None:
@@ -159,7 +159,7 @@ class PipelineRuntime:
             self.polisher,
             self.sparse_editor,
             self.extractor,
-            self.book_bible,
+            self.cjk_seeder,
             self.annotation_aligner,
         ):
             ag.src = source

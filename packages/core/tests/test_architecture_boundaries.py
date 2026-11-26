@@ -284,7 +284,26 @@ def test_pipeline_modules_live_in_a_stage_subpackage():
             )
             staged[path.stem] = stage
     assert staged["glossary_notes"] == "translate"
-    assert len(staged) == 34, sorted(staged)
+    assert len(staged) == 33, sorted(staged)
+
+
+def test_fork_scope_and_line_budget_guardrails():
+    """Guard against pipeline sprawl and re-introduction of removed heuristic subsystems."""
+    translation_lines = len(
+        (PIPELINE_DIR / "translate" / "translation.py").read_text(encoding="utf-8").splitlines()
+    )
+    assert translation_lines <= 900, f"translation.py grew to {translation_lines} lines (cap 900)"
+    retired = (
+        TRANS_NOVEL_DIR / "agents" / "book_bible.py",
+        TRANS_NOVEL_DIR / "agents" / "batch_risk.py",
+        PIPELINE_DIR / "translate" / "bible_seed.py",
+        PIPELINE_DIR / "translate" / "consistency_sweep.py",
+        PIPELINE_DIR / "translate" / "quote_memory.py",
+        TRANS_NOVEL_DIR / "assemble" / "quotes.py",
+        TRANS_NOVEL_DIR / "glossary" / "adherence.py",
+    )
+    present = [p.relative_to(TRANS_NOVEL_DIR).as_posix() for p in retired if p.exists()]
+    assert not present, f"Retired bloat modules re-appeared: {present}"
 
 
 def test_pipeline_stage_packages_do_not_import_across_unrelated_stages():

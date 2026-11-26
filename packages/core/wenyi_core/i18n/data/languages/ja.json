@@ -1,10 +1,6 @@
 {
   "label": "Japanese",
   "english_name": "Japanese",
-  "inline_gloss_markers": [
-    "直訳",
-    "訳注"
-  ],
   "source_guidance": "Interpret omitted Japanese subjects and the register of honorifics and self-reference. Read kanji compounds according to Japanese meaning. Source markers 〘…〙 contain furigana pronunciation hints: never include the markers or their kana contents in the translation.",
   "target_guidance": "Use natural Japanese ${genre_prose_kind}. Maintain the appropriate scope of plain/polite forms and ${genre_japanese_reference_guidance}. Do not add unsupported identity or gender information.",
   "punctuation_rule": "Use Japanese stops and commas (、。), dialogue quotes (「」『』) and punctuation conventions. Preserve symbol structure, repetition and pairing.",

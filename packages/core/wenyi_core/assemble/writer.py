@@ -26,7 +26,6 @@ from .epub_writer import (
 from .export_view import AssembleStore, ExportViewStore
 from .html_writer import _assemble_html
 from .pdf_writer import _assemble_pdf
-from .quotes import QuoteStyle
 from .text_writer import _assemble_markdown, _assemble_text
 from .writer_common import (
     _OUT_EXT,
@@ -71,7 +70,6 @@ def assemble(
     order: Literal["target_first", "source_first"] = "target_first",
     preserve_source_style: bool = False,
     about_page: bool = True,
-    quote_style: QuoteStyle = "preserve",
     babeldoc_timeout: float = 600.0,
     language_policy: PolicyPlan | None = None,
     warnings: list[str] | None = None,
@@ -121,7 +119,7 @@ def assemble(
     view = (
         store
         if isinstance(store, ExportViewStore)
-        else ExportViewStore(store, plan=language_policy, quote_style=quote_style)
+        else ExportViewStore(store, plan=language_policy)
     )
     m = view.load_manifest()
     template_source = source_path

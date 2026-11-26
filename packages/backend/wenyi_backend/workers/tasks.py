@@ -94,6 +94,8 @@ def _auto_resume_still_pending(
                 pass
     if marker is None:
         return True
+    if isinstance(marker, (bytes, bytearray)):
+        marker = marker.decode("utf-8", errors="replace")
     return marker == expected_run_id
 
 

@@ -45,21 +45,23 @@ export function WorkflowSettings({
   const precision =
     scope === "project" &&
     pipeline.translation_mode === "three_draft_synthesis";
-  const glossaryMode = pipeline.glossary_mode === "compiled" ? "compiled" : "incremental";
+  const polishEnabled = Boolean(pipeline.polish);
   const polishMode = pipeline.polish_mode === "sparse" ? "sparse" : "full";
   const chapterConcurrencyNum = Number(pipeline.chapter_concurrency);
   const chapterConcurrency =
     Number.isInteger(chapterConcurrencyNum) && chapterConcurrencyNum >= 1
       ? String(chapterConcurrencyNum)
       : "1";
-  const concurrencyOptions = Array.from(
+  const chapterConcurrencyOptions = Array.from(
     new Set(["1", "2", "4", "8", chapterConcurrency]),
   ).sort((a, b) => Number(a) - Number(b));
-  const PIPELINE: [string, string][] = [
-    ["book_understanding", tr("settings.bookUnderstanding")],
-    ["polish", tr("settings.polishing")],
-    ["review", tr("common.wholeBookReview")],
-    ["review_autofix", tr("settings.applyAutofixesToTheSavedTranslation")],
+
+  const PIPELINE: [string, string, string | undefined][] = [
+    ["book_understanding", tr("settings.bookUnderstanding"), undefined],
+    ["polish", tr("settings.polishing"), undefined],
+    ["review", tr("common.wholeBookReview"), undefined],
+    ["review_autofix", tr("settings.applyAutofixesToTheSavedTranslation"), undefined],
+    ["skip_boilerplate", tr("settings.skipBoilerplate"), tr("settings.skipBoilerplateHelp")],
   ];
 
   return (
@@ -68,10 +70,6 @@ export function WorkflowSettings({
         <div className={cn(cardSurface, "p-4")}>
           <div className="space-y-2">
             <Label id="project-prompt-genre-label">{tr("settings.currentStyle")}</Label>
-            {/* A value, not a field. It is fixed at creation, so an input here
-                offered an editable-looking box that ignored every hover and every
-                keystroke; presenting it as plain text says the same thing without
-                promising interaction. */}
             <p
               id="project-prompt-genre"
               aria-labelledby="project-prompt-genre-label"
@@ -90,120 +88,65 @@ export function WorkflowSettings({
           </div>
         </div>
       )}
-      {showPipeline && <div className={cn(cardSurface, "overflow-hidden")}>
-        {PIPELINE.map(([key, label]) => (
+      {showPipeline && (
+        <div className={cn(cardSurface, "overflow-hidden")}>
+          {PIPELINE.map(([key, label, help]) => (
+            <SettingsRow
+              key={key}
+              label={label}
+              description={help}
+              htmlFor={`pipeline-${key}`}
+              control={
+                <Switch
+                  id={`pipeline-${key}`}
+                  disabled={disabled || (key === "polish" && precision)}
+                  checked={Boolean(pipeline[key])}
+                  onCheckedChange={(checked) => onField("pipeline", key, checked)}
+                />
+              }
+            />
+          ))}
           <SettingsRow
-            key={key}
-            label={label}
-            htmlFor={`pipeline-${key}`}
+            label={tr("settings.polishMode")}
+            description={tr("settings.polishModeHelp")}
+            htmlFor="pipeline-polish_mode"
             control={
-              <Switch
-                id={`pipeline-${key}`}
-                disabled={disabled || (key === "polish" && precision)}
-                checked={Boolean(pipeline[key])}
-                onCheckedChange={(checked) => onField("pipeline", key, checked)}
-              />
+              <Select
+                id="pipeline-polish_mode"
+                value={polishMode}
+                disabled={disabled || !polishEnabled || precision}
+                onValueChange={(value) => onField("pipeline", "polish_mode", value)}
+                className={SETTINGS_CONTROL_CLASSNAME}
+              >
+                <SelectItem value="full">{tr("settings.polishModeFull")}</SelectItem>
+                <SelectItem value="sparse">{tr("settings.polishModeSparse")}</SelectItem>
+              </Select>
             }
           />
-        ))}
-        <SettingsRow
-          label={tr("settings.consistencySweep")}
-          htmlFor="pipeline-consistency_sweep"
-          description={tr("settings.consistencySweepHelp")}
-          control={
-            <Switch
-              id="pipeline-consistency_sweep"
-              disabled={disabled}
-              checked={Boolean(pipeline.consistency_sweep)}
-              onCheckedChange={(checked) => onField("pipeline", "consistency_sweep", checked)}
-            />
-          }
-        />
-        <SettingsRow
-          label={tr("settings.deterministicHygiene")}
-          htmlFor="pipeline-deterministic_hygiene"
-          description={tr("settings.deterministicHygieneHelp")}
-          control={
-            <Switch
-              id="pipeline-deterministic_hygiene"
-              disabled={disabled}
-              checked={pipeline.deterministic_hygiene !== false}
-              onCheckedChange={(checked) => onField("pipeline", "deterministic_hygiene", checked)}
-            />
-          }
-        />
-        <SettingsRow
-          label={tr("settings.glossaryMode")}
-          htmlFor="pipeline-glossary-mode"
-          description={tr("settings.glossaryModeHelp")}
-          control={
-            <Select
-              id="pipeline-glossary-mode"
-              className={SETTINGS_CONTROL_CLASSNAME}
-              disabled={disabled}
-              value={glossaryMode}
-              onValueChange={(value) => onField("pipeline", "glossary_mode", value)}
-            >
-              <SelectItem value="incremental">{tr("settings.glossaryModeIncremental")}</SelectItem>
-              <SelectItem value="compiled">{tr("settings.glossaryModeCompiled")}</SelectItem>
-            </Select>
-          }
-        />
-        <SettingsRow
-          label={tr("settings.polishMode")}
-          htmlFor="pipeline-polish-mode"
-          description={tr("settings.polishModeHelp")}
-          control={
-            <Select
-              id="pipeline-polish-mode"
-              className={SETTINGS_CONTROL_CLASSNAME}
-              disabled={disabled || !pipeline.polish || precision}
-              value={polishMode}
-              onValueChange={(value) => onField("pipeline", "polish_mode", value)}
-            >
-              <SelectItem value="full">{tr("settings.polishModeFull")}</SelectItem>
-              <SelectItem value="sparse">{tr("settings.polishModeSparse")}</SelectItem>
-            </Select>
-          }
-        />
-        <SettingsRow
-          label={tr("settings.chapterConcurrency")}
-          htmlFor="pipeline-chapter-concurrency"
-          description={tr("settings.chapterConcurrencyHelp")}
-          control={
-            <Select
-              id="pipeline-chapter-concurrency"
-              className={SETTINGS_CONTROL_CLASSNAME}
-              disabled={disabled || glossaryMode !== "compiled" || precision}
-              value={chapterConcurrency}
-              onValueChange={(value) => onField("pipeline", "chapter_concurrency", Number(value))}
-            >
-              {concurrencyOptions.map((option) => (
-                <SelectItem key={option} value={option}>
-                  {option}
-                </SelectItem>
-              ))}
-            </Select>
-          }
-        />
-        <SettingsRow
-          label={tr("settings.batchGlossary")}
-          htmlFor="pipeline-batch-glossary"
-          description={tr("settings.batchGlossaryHelp")}
-          control={
-            <Select
-              id="pipeline-batch-glossary"
-              className={SETTINGS_CONTROL_CLASSNAME}
-              disabled={disabled}
-              value={pipeline.batch_glossary === "relevant" ? "relevant" : "all"}
-              onValueChange={(value) => onField("pipeline", "batch_glossary", value)}
-            >
-              <SelectItem value="all">{tr("settings.batchGlossaryAll")}</SelectItem>
-              <SelectItem value="relevant">{tr("settings.batchGlossaryRelevant")}</SelectItem>
-            </Select>
-          }
-        />
-      </div>}
+          <SettingsRow
+            label={tr("settings.chapterConcurrency")}
+            description={tr("settings.chapterConcurrencyHelp")}
+            htmlFor="pipeline-chapter_concurrency"
+            control={
+              <Select
+                id="pipeline-chapter_concurrency"
+                value={chapterConcurrency}
+                disabled={disabled || precision}
+                onValueChange={(value) =>
+                  onField("pipeline", "chapter_concurrency", Number(value))
+                }
+                className={SETTINGS_CONTROL_CLASSNAME}
+              >
+                {chapterConcurrencyOptions.map((option) => (
+                  <SelectItem key={option} value={option}>
+                    {option}
+                  </SelectItem>
+                ))}
+              </Select>
+            }
+          />
+        </div>
+      )}
     </fieldset>
   );
 }

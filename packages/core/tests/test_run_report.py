@@ -171,32 +171,3 @@ def test_a_missing_run_directory_reports_empty_rather_than_failing(tmp_path):
     assert report["events"] == 0
     assert report["failures"] == 0
     assert report["usage"] == {}
-
-
-def test_background_polish_backlog_counts_resumed_batches_once(tmp_path):
-    store = FakeStore(tmp_path)
-    queued = {"event": "batch_polish_queued", "chapter": 0}
-    write_events(
-        store,
-        [
-            {**queued, "start_index": 0},
-            {**queued, "start_index": 1},
-            {**queued, "start_index": 2},
-            {"event": "batch_polished", "chapter": 0, "start_index": 0},
-            # Interrupted, requeued on resume, then failed.
-            {**queued, "start_index": 1},
-            {"event": "batch_polish_failed", "chapter": 0, "start_index": 1},
-        ],
-    )
-    assert build_report(store)["polish"] == {
-        "queued": 4,
-        "polished": 1,
-        "failed": 1,
-        "pending": 1,
-    }
-
-
-def test_inline_polish_has_no_backlog(tmp_path):
-    store = FakeStore(tmp_path)
-    write_events(store, [{"event": "batch_translated", "chapter": 0, "start_index": 0}])
-    assert build_report(store)["polish"] is None

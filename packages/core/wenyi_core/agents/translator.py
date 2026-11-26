@@ -13,6 +13,7 @@ import logging
 import re
 
 from ..alignment.objects import marked_sources
+from ..glossary.prompt_scope import split_trimmed_glossary_tiers
 from ..glossary.store import GlossaryStore
 from ..i18n import genres
 from ..llm.json_parser import JsonParseError, UnsafeJsonRepairError, parse_json_result
@@ -227,13 +228,19 @@ class Translator(Agent):
             else ""
         )
 
+        match_text = "\n".join(part for part in (*sources, next_source, chapter_digest) if part)
+        prefix_budget = self.config.pipeline.glossary_prompt_tokens
+
         def _render(terms_for_prompt: list[GlossaryTerm]) -> tuple[str, str]:
-            # Keep book-wide style, synopsis and entity glossary at the end of the system
-            # message so consecutive batches share a byte-identical prefix on a complete
-            # message boundary for KV prefix caching. Per-batch navigation titles, local
-            # glossary notes and protected-object guidance stay outside that shared prefix.
-            entity_terms = [t for t in terms_for_prompt if t.type != TYPE_NAVIGATION]
-            nav_terms = [t for t in terms_for_prompt if t.type == TYPE_NAVIGATION]
+            # Keep book-wide style, synopsis and the frozen entity prefix at the end of the
+            # system message so consecutive batches share a byte-identical KV-cacheable prefix.
+            # Per-batch overflow entities, matched navigation titles, local glossary notes,
+            # and protected-object guidance stay outside that shared prefix.
+            entity_terms, batch_extra_terms = split_trimmed_glossary_tiers(
+                glossary_terms, terms_for_prompt, match_text, prefix_budget=prefix_budget
+            )
+            overflow_terms = [t for t in batch_extra_terms if t.type != TYPE_NAVIGATION]
+            nav_terms = [t for t in batch_extra_terms if t.type == TYPE_NAVIGATION]
             shared_glossary = prompts.render_glossary(
                 entity_terms,
                 source_lang=self.src,
@@ -243,6 +250,15 @@ class Translator(Agent):
             system_text = (
                 f"{base_system}\n\n{style_block}\n\n{synopsis_block}\n\n"
                 f"{glossary_block}{protected_guidance}"
+            )
+            overflow_glossary = (
+                prompts.render_glossary(
+                    overflow_terms,
+                    source_lang=self.src,
+                    genre=self.language_policy.context.genre,
+                )
+                if overflow_terms
+                else ""
             )
             nav_glossary = (
                 prompts.render_glossary(
@@ -262,7 +278,9 @@ class Translator(Agent):
                 if self.config.pipeline.use_glossary_notes
                 else ""
             )
-            legacy_glossary_parts = [part for part in (nav_glossary, batch_notes) if part]
+            legacy_glossary_parts = [
+                part for part in (overflow_glossary, nav_glossary, batch_notes) if part
+            ]
             user_text = self.render(
                 "translator_user",
                 src=self.src,
@@ -286,6 +304,8 @@ class Translator(Agent):
             )
             if not legacy_user_has_glossary:
                 user_prefix_parts: list[str] = []
+                if overflow_glossary:
+                    user_prefix_parts.append(f"[Additional glossary]\n{overflow_glossary}")
                 if nav_glossary:
                     user_prefix_parts.append(f"[Navigation titles]\n{nav_glossary}")
                 if batch_notes:
@@ -298,7 +318,6 @@ class Translator(Agent):
                     user_text += note_lookup_suffix
             return system_text, user_text
 
-        match_text = "\n".join(part for part in (*sources, next_source, chapter_digest) if part)
         system, user, effective_terms, _shrunk = fit_prompt_to_context_window(
             config=self.config,
             operation="translation.body",

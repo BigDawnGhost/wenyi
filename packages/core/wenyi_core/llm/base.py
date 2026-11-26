@@ -131,7 +131,6 @@ class LLMClient(ABC):
         operation: str,
         json_mode: bool = False,
         max_tokens: int | None = None,
-        thinking_boost: int = 0,
     ) -> str:
         """Return model text using the registered operation route."""
         raise NotImplementedError
@@ -142,22 +141,7 @@ class LLMClient(ABC):
         *,
         operation: str,
         max_tokens: int | None = None,
-        thinking_boost: int = 0,
     ) -> Any:
         """Request and parse JSON output."""
-        if thinking_boost > 0:
-            text = self.complete(
-                messages,
-                operation=operation,
-                json_mode=True,
-                max_tokens=max_tokens,
-                thinking_boost=thinking_boost,
-            )
-        else:
-            text = self.complete(
-                messages,
-                operation=operation,
-                json_mode=True,
-                max_tokens=max_tokens,
-            )
+        text = self.complete(messages, operation=operation, json_mode=True, max_tokens=max_tokens)
         return parse_json_loose(text)

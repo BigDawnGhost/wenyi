@@ -110,7 +110,7 @@ llm:
 
 | 预设 | 各阶段初始模型 | 模型选项 |
 |---|---|---|
-| `deepseek` | `deepseek/deepseek-flash` | `thinking: true`、`reasoning_effort: high`；`glossary.extract` 路由设为 `thinking: low`。 |
+| `deepseek` | `deepseek/deepseek-flash` | `thinking: true`、`reasoning_effort: high` |
 | `gemini` | `gemini/gemini-3.6-flash` | 不设置 thinking／temperature，沿用服务默认。 |
 | `fake` | `fake/fake` | 离线测试适配器，无真实翻译、无需凭据。 |
 
@@ -133,7 +133,6 @@ llm:
 | `llm.providers.<id>.quota_group` | 默认不设置，否则引用已有配额组。 |
 | `llm.models.<连接名/模型名>` | `{}` 表示登记该模型并使用提供商默认参数。 |
 | `llm.models.<连接名/模型名>.max_output_tokens` | 默认不设置；设置时为正整数。 |
-| `llm.models.<连接名/模型名>.context_window` | 默认不设置（对 DeepSeek/OpenAI/Gemini 已知模型使用保守默认值）；设置时为正整数。发送前预检在接近窗口上限时自动缩减术语表或给出可执行报错。 |
 | `llm.models.<连接名/模型名>.options` | `{}`，下文的适配器专属字段。 |
 | `llm.routes.<operation>.model` | 本操作使用的 `连接名/模型名`。 |
 | `llm.routes.<operation>.thinking` | 模型支持的思考强度，或用 `null` 沿用已登记模型自身的设置。 |
@@ -348,23 +347,13 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 | 设置 | 默认值 | 含义 |
 |---|---|---|
 | `pipeline.translation_mode` | `standard` | `standard` 或 `three_draft_synthesis`，后者要求 `polish: true`。 |
-| `pipeline.glossary_mode` | `incremental` | `incremental` 逐批抽取术语；`compiled` 在正文翻译前根据章节梗概与双语境熵探测编译冻结的 Book Bible，并跳过热路径上的逐批抽取。 |
-| `pipeline.chapter_concurrency` | `1` | 章节并发草稿数（`1`–`16`）。`1` 顺序翻译并跨章传递前文译文；大于 `1` 且 `glossary_mode: compiled` 时多章（或超大单章的波次）并发翻译，跨章使用确定性的前章末尾原文参考，由单线程写入存储；`incremental` 术语模式下仍顺序翻译，因为并发提示词在前面章节新增术语前就已确定。 |
 | `pipeline.polish` | `true` | 润色已译批次，增加较多模型工作。 |
-| `pipeline.polish_mode` | `full` | `full` 重写整批译文；`sparse` 运行对照原文的稀疏语义与文风编辑，仅对存在实质语义反转、典故或格式缺陷的段落输出 JSON 补丁。 |
-| `pipeline.polish_concurrency` | `1` | 标准模式润色并发，整数 ≥ 1。`1` 在下一批开始前润色当前批；大于 `1` 时先保存初稿，在后台润色并继续翻译，最多排队该值两倍的批次。provider `max_concurrency` 仍然生效。`three_draft_synthesis` 忽略此项。见[后台润色](../guide/pipeline.md#deferred-polishing)。 |
-| `pipeline.deterministic_hygiene` | `true` | 原文段落不含字面 `\n` 时，将译文中紧贴正文泄漏的字面 `\n` 转为换行（不处理代码、LaTeX 与 URL 片段）。不改写引号、破折号、说话标记、分行或译名；导出时的引号样式请用 `output.quote_style`。 |
-| `pipeline.consistency_sweep` | `false` | 启用快速译后跨章扫描：通过稀疏编辑器修补缺少术语规范译名的段落，并在 `glossary_mode: compiled` 下校准 Book Bible 标记为有分歧的称号漂移（英文目标）；未编译 Book Bible 时只执行术语补齐；不会用前文章节的译文覆盖重复段落。 |
-| `pipeline.batch_glossary` | `all` | `all` 向每个正文翻译、润色和精翻请求发送全量实体术语（EPUB 目录标题仅在命中本批原文时携带）；`relevant` 只向每批发送与其文本匹配的词条，并让抽取只看到被抽取文本中出现的已有词条。见[翻译上下文与术语库](../guide/pipeline.md#context-and-glossary)。 |
-| `pipeline.glossary_prompt_tokens` | `0` | 可选的单次请求术语表 token 上限（`cl100k_base`，整数 ≥ 0）。`0` 表示不设上限，发送内容只由 `batch_glossary` 决定。设置上限后，`all` 保留追加稳定的前导词条加命中本批的后续词条，`relevant` 限制命中词条总量。 |
-| `pipeline.skip_boilerplate` | `false` | 可选的导入时清理开关：将抓取站点的水印（域名与推广文字同行）、广告网络标记和单独的 `>` 或竖线（`\|`）行标记为 `meta.skip = true` 而非删除，从而跳过翻译与导出同时保持段落索引与锚点稳定。单独的网址行和 `...No` 这类以标点开头的短句保留为正文；站点特有的残留请用 `boilerplate_patterns` 匹配。内置规则变更后会重新解析缓存的原文，但已初始化的项目在重新导入前保留原有的跳过标记。 |
-| `pipeline.boilerplate_patterns` | `[]` | 启用 `pipeline.skip_boilerplate` 时额外匹配的自定义正则表达式列表。 |
 | `pipeline.align_retry_limit` | `2` | 额外结构输出尝试次数；`0` 关闭。 |
 | `pipeline.rolling_context_tokens` | `512` | 前文译文预算，整数 ≥ 0，按 `cl100k_base` 计数。 |
 | `pipeline.book_understanding` | `true` | 生成覆盖完整原文的章节梗概和全书概览。 |
-| `pipeline.prescan_concurrency` | `4` | 章节梗概与全书梗概归并并发；`1` 为顺序执行。 |
+| `pipeline.prescan_concurrency` | `4` | 章节梗概并发；`1` 为顺序执行。 |
 | `pipeline.synopsis_source_tokens` | `8000` | 每个章节梗概原文块的 token 预算，正整数。 |
-| `pipeline.synopsis_reduce_tokens` | `12000` | 每组摘要归并内容、生成摘要及风格分析章节梗概块的 token 预算，正整数。 |
+| `pipeline.synopsis_reduce_tokens` | `12000` | 每组摘要归并内容及生成摘要的 token 预算，正整数。 |
 | `pipeline.glossary_note_workers` | `0` | CLI：`0` 关闭；`1`–`16` 指定并行词条数。[Web/Desktop 项目开关](../guide/workspace.md#创建项目)开启时使用 4 个 worker。 |
 | `pipeline.annotation_alignment` | `true` | 定位译文链接／注释。EPUB 使用段末回退标记；PDF 忽略失败项，见 [PDF 格式说明](formats.md#babeldoc)。 |
 | `pipeline.annotation_alignment_concurrency` | `4` | 单个逻辑段内逐注释请求的并发数。 |
@@ -395,8 +384,7 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 
 旧配置中的 `terminology_context: false` 仍可读取。`true` 和 `terminology.*` 模型路由已移除；升级时删除这些设置，不会自动改为付费的 note 维护。
 
-无论 `batch_glossary` 如何设置，新的 Reviewer 请求总是使用全量术语。
-`relevant` 可缩短长篇书的正文提示词，但会去掉段落只隐含指代的词条；修改它不会重译已完成批次。
+正文翻译和新的 Reviewer 请求总是使用全量术语，没有范围选择器。
 注释定位可能增加模型请求，定位失败的处理取决于[格式](formats.md)。
 完整流程、成本和续跑语义见[流程指南](../guide/pipeline.md)，
 标记／排版限制见[格式参考](formats.md)。
@@ -463,7 +451,6 @@ BabelDOC 是可选的独立 AGPL 服务，用于尽量保留 PDF 版式。
 | `output.bilingual_order` | `target_first` | `target_first` 或 `source_first`；选择按段配对格式中在前的版本，以及 PDF 并列页中位于左侧的版本。 |
 | `output.bilingual_preserve_source_style` | `false` | 保留已记录的原文样式，替代该格式的默认原文显示方式。 |
 | `output.about_page` | `true` | 为 EPUB 添加“关于此翻译”项目说明页。 |
-| `output.quote_style` | `preserve` | `preserve`、`typographic`（`“ ” ‘ ’`）或 `straight`（`" '`）。`typographic` 采用英语的引号配对与省音规则，仅对英语目标语言生效，其他目标语言保留原有引号；`straight` 在拉丁字母目标语言中将所有弯引号（含 `„ ‚`）转为 ASCII 引号，不改动法式引号 `« »`。仅在导出时生效，不修改已保存译文及双语中的原文。 |
 
 `bilingual_preserve_source_style` 与顺序独立。
 EPUB/HTML 中，`true` 用正常书籍样式替代淡化原文。

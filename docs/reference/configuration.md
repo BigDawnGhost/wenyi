@@ -117,7 +117,7 @@ one connection named after the provider, one registered model, and a separate ro
 
 | Preset | Model assigned to each operation | Model options |
 |---|---|---|
-| `deepseek` | `deepseek/deepseek-flash` | `thinking: true`, `reasoning_effort: high`; the `glossary.extract` route sets `thinking: low`. |
+| `deepseek` | `deepseek/deepseek-flash` | `thinking: true`, `reasoning_effort: high` |
 | `gemini` | `gemini/gemini-3.6-flash` | Thinking/temperature unset; service defaults apply. |
 | `fake` | `fake/fake` | Offline test adapter, no real translation or credentials. |
 
@@ -140,7 +140,6 @@ Presets do not query the remote service for capabilities.
 | `llm.providers.<id>.quota_group` | Unset; otherwise reference a configured quota group. |
 | `llm.models.<connection/model>` | `{}` registers the model with provider defaults. |
 | `llm.models.<connection/model>.max_output_tokens` | Unset; positive integer if supplied. |
-| `llm.models.<connection/model>.context_window` | Unset (uses conservative known defaults for DeepSeek/OpenAI/Gemini where documented); positive integer if supplied. Preflight shrinks the glossary or fails with a clear message before overflowing the window. |
 | `llm.models.<connection/model>.options` | `{}`; adapter-specific fields below. |
 | `llm.routes.<operation>.model` | Registered `connection/model` for this operation. |
 | `llm.routes.<operation>.thinking` | A supported effort, or `null` to use the registered model's own settings. |
@@ -370,23 +369,13 @@ described under [scope](#scope).
 | Setting | Default | Meaning |
 |---|---|---|
 | `pipeline.translation_mode` | `standard` | `standard` or `three_draft_synthesis`; the latter requires `polish: true`. |
-| `pipeline.glossary_mode` | `incremental` | `incremental` extracts glossary terms per batch; `compiled` compiles a frozen Book Bible from chapter digests and a dual-context entropy probe before chapter 1 and skips hot-path per-batch extraction. |
-| `pipeline.chapter_concurrency` | `1` | Concurrent chapter drafting workers (`1`–`16`). `1` translates chapters serially with cross-chapter target context; above `1` with `glossary_mode: compiled`, chapters (or waves of huge single chapters) translate concurrently using deterministic trailing-source lookbehind and a single storage writer; with `incremental` glossaries chapters stay serial, since parallel prompts are planned before earlier chapters add terms. |
 | `pipeline.polish` | `true` | Polish translated batches; adds substantial model work. |
-| `pipeline.polish_mode` | `full` | `full` rewrites every batch; `sparse` runs a source-grounded semantic and craft editor that emits JSON patches only for paragraphs with concrete fidelity, allusion, or formatting defects. |
-| `pipeline.polish_concurrency` | `1` | Standard-mode polish workers, integer ≥ 1. `1` polishes each batch before the next one; above `1`, drafts are saved and polished in the background while translation continues, with at most twice this many batches queued. Provider `max_concurrency` still applies. Ignored by `three_draft_synthesis`. See [deferred polishing](../guide/pipeline.md#deferred-polishing). |
-| `pipeline.deterministic_hygiene` | `true` | Repair leaked literal `\n` escapes that are glued to the text, turning them into line breaks, when the source paragraph has none (code, LaTeX and URL spans are left alone). Quotation marks, dashes, speech tags, line layout and names are never rewritten; use `output.quote_style` for export-time quote styling. |
-| `pipeline.consistency_sweep` | `false` | Run a fast post-translation cross-chapter sweep that patches paragraphs missing a canonical glossary term and, with `glossary_mode: compiled`, reconciles drift in titles the Book Bible flagged as divergent (English targets) through the sparse editor. Without a compiled Book Bible only the glossary pass runs. Repeated paragraphs are never overwritten with an earlier chapter's rendering. |
-| `pipeline.batch_glossary` | `all` | `all` sends the full entity glossary (plus EPUB navigation titles only when they occur in the request text) to every body translation, polish and precision request; `relevant` sends each batch only the entries matching its text and limits extraction to existing entries in the extracted text. See [translation context and the glossary](../guide/pipeline.md#context-and-glossary). |
-| `pipeline.glossary_prompt_tokens` | `0` | Optional per-request glossary token cap (`cl100k_base`, integer ≥ 0). `0` means no cap, so `batch_glossary` alone decides what is sent. With a cap, `all` keeps the append-stable leading prefix plus matching later entries, and `relevant` caps matched entries. |
-| `pipeline.skip_boilerplate` | `false` | Optional ingest-time filter that marks scraped-site watermarks (a domain paired with promo text), ad-network markers and lone `>` or pipe (`\|`) lines with `meta.skip = true` instead of deleting segments, excluding them from translation and export while preserving segment indices and anchors. Standalone URLs and short punctuation-led lines such as `...No` stay as text; add `boilerplate_patterns` for site-specific debris. A change to the built-in rules re-parses cached sources; an already initialized project keeps its skip flags until the source is re-imported. |
-| `pipeline.boilerplate_patterns` | `[]` | Additional regular expressions matched when `pipeline.skip_boilerplate` is `true`. |
 | `pipeline.align_retry_limit` | `2` | Additional structural-output attempts; `0` disables them. |
 | `pipeline.rolling_context_tokens` | `512` | Preceding translation budget, integer ≥ 0, counted with `cl100k_base`. |
 | `pipeline.book_understanding` | `true` | Generate full-source chapter digests and a book synopsis. |
-| `pipeline.prescan_concurrency` | `4` | Concurrency for chapter digests and book-synopsis reduction; use `1` for sequential work. |
+| `pipeline.prescan_concurrency` | `4` | Chapter-digest concurrency; use `1` for sequential work. |
 | `pipeline.synopsis_source_tokens` | `8000` | Positive integer token budget for each chapter-digest source chunk. |
-| `pipeline.synopsis_reduce_tokens` | `12000` | Positive integer token budget for each digest merge group, generated summary, and the style-analysis digest block. |
+| `pipeline.synopsis_reduce_tokens` | `12000` | Positive integer token budget for each digest merge group and generated summary. |
 | `pipeline.glossary_note_workers` | `0` | CLI: `0` disables; `1`–`16` sets parallel note workers. The [Web/Desktop project switch](../guide/workspace.md#create-a-project) uses 4 when enabled. |
 | `pipeline.annotation_alignment` | `true` | Align translated links/annotations. EPUB uses paragraph-end fallbacks; PDF omits failed items. See [PDF formats](formats.md#babeldoc). |
 | `pipeline.annotation_alignment_concurrency` | `4` | Concurrent per-annotation requests within one logical paragraph. |
@@ -423,9 +412,8 @@ do not by themselves regenerate verified complete digests or cached synopses.
 
 Older configurations with `terminology_context: false` still load. The `true` setting and `terminology.*` model routes have been removed; remove these settings when upgrading. Incremental note generation is never enabled implicitly.
 
-Fresh Reviewer requests always receive the full glossary, whatever
-`batch_glossary` says. `relevant` shrinks body prompts on long books but drops entries a
-paragraph refers to only implicitly; changing it does not retranslate completed batches. Annotation alignment may add model requests;
+Body translation and fresh Reviewer requests always receive the full glossary;
+there is no scope selector. Annotation alignment may add model requests;
 placement-failure behavior depends on the [format](formats.md). Full workflow, cost, and resume
 semantics belong in the [workflow guide](../guide/pipeline.md); markup/layout
 limitations belong in [formats](formats.md).
@@ -493,7 +481,6 @@ for choosing the backend.
 | `output.bilingual_order` | `target_first` | `target_first` or `source_first`; selects the first version in paragraph-paired formats and the left-hand version in PDF spreads. |
 | `output.bilingual_preserve_source_style` | `false` | Preserve recorded source styles rather than the format's default source presentation. |
 | `output.about_page` | `true` | Add the project “About this translation” page to EPUB output. |
-| `output.quote_style` | `preserve` | `preserve`, `typographic` (`“ ” ‘ ’`), or `straight` (`" '`). `typographic` uses English quote pairing and elisions, so it applies to English targets only; other targets keep their quotes. `straight` turns every curly quote, including `„ ‚`, into ASCII for Latin-script targets and leaves guillemets alone. Applied at export only; saved translations and bilingual source text are unchanged. |
 
 `bilingual_preserve_source_style` is independent of ordering. In EPUB/HTML,
 `true` inherits normal book styling instead of subdued source text. In DOCX,

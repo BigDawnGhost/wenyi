@@ -122,17 +122,3 @@ def test_inapplicable_overrides_are_rejected_at_the_route(preset, model, options
                 "routes": {"translation.body": {"model": model, "thinking": level}},
             }
         )
-
-
-def test_deepseek_preset_extracts_glossary_terms_at_low_effort():
-    routes = resolve_routes(LLMConfig.model_validate({"preset": "deepseek"}))
-    assert routes["glossary.extract"].request_model().options.reasoning_effort == "low"
-    others = {name: route for name, route in routes.items() if name != "glossary.extract"}
-    assert {route.request_model().options.reasoning_effort for route in others.values()} == {"high"}
-    # A supplied route replaces the preset's whole entry, including its effort.
-    custom = LLMConfig.model_validate(
-        {"preset": "deepseek", "routes": {"glossary.extract": {"model": "deepseek/deepseek-flash"}}}
-    )
-    assert resolve_routes(custom)["glossary.extract"].request_model().options.reasoning_effort == (
-        "high"
-    )

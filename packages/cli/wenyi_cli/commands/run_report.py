@@ -74,26 +74,6 @@ def _crashed_step_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def _polish_backlog(events: list[dict[str, Any]]) -> dict[str, int] | None:
-    """Count background polish jobs; a batch is pending when its last polish event is a queue."""
-    latest: dict[tuple[Any, Any], str] = {}
-    counts = {"queued": 0, "polished": 0, "failed": 0}
-    names = {
-        "batch_polish_queued": "queued",
-        "batch_polished": "polished",
-        "batch_polish_failed": "failed",
-    }
-    for event in events:
-        name = names.get(str(event.get("event")))
-        if name is None:
-            continue
-        counts[name] += 1
-        latest[(event.get("chapter"), event.get("start_index"))] = name
-    if not counts["queued"]:
-        return None
-    return {**counts, "pending": sum(state == "queued" for state in latest.values())}
-
-
 def build_report(store) -> dict[str, Any]:
     """Collect what a failed or slow run would need to explain itself."""
     events = _read_events(store.event_log_path)
@@ -122,5 +102,4 @@ def build_report(store) -> dict[str, Any]:
         else None,
         "timing": timing,
         "usage": _usage_totals(usage),
-        "polish": _polish_backlog(events),
     }

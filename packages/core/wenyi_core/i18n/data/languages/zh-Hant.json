@@ -2,12 +2,6 @@
   "extends": "zh",
   "label": "Traditional Chinese",
   "english_name": "Traditional Chinese",
-  "inline_gloss_markers": [
-    "直譯",
-    "字面意思",
-    "譯注",
-    "譯者注"
-  ],
   "target_guidance": "Use Traditional Chinese with consistent traditional characters and natural vocabulary. Preserve ${genre_chinese_style_focus}.",
   "punctuation_rule": "Use Traditional Chinese publishing punctuation and 「」『』 quotation marks. Preserve symbol structure, repetition and pairing. Do not convert to simplified characters or Simplified Chinese punctuation conventions.",
   "title_rule": "Use conventional Traditional Chinese titles and section labels, such as 第3章, 序章 and 尾聲.",

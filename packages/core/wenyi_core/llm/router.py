@@ -19,13 +19,7 @@ from .limits import RequestLimits
 from .operations import require_operation
 from .registry import provider_spec
 from .retrying import is_retryable_provider_error, safe_provider_error
-from .routing import (
-    ResolvedRoute,
-    escalate_route_thinking,
-    model_route,
-    operation_route,
-    resolve_routes,
-)
+from .routing import ResolvedRoute, model_route, operation_route, resolve_routes
 from .transport import ProviderAdapter, RequestContext
 from .usage import UsageSample
 
@@ -134,17 +128,10 @@ class RoutedLLMClient(LLMClient):
         operation: str,
         json_mode: bool = False,
         max_tokens: int | None = None,
-        thinking_boost: int = 0,
     ) -> str:
         require_operation(operation)
         primary = self.routes[operation]
-        return self._complete(
-            messages,
-            primary,
-            json_mode=json_mode,
-            max_tokens=max_tokens,
-            thinking_boost=thinking_boost,
-        )
+        return self._complete(messages, primary, json_mode=json_mode, max_tokens=max_tokens)
 
     def _complete(
         self,
@@ -153,18 +140,10 @@ class RoutedLLMClient(LLMClient):
         *,
         json_mode: bool,
         max_tokens: int | None = None,
-        thinking_boost: int = 0,
     ) -> str:
         operation = primary.operation
         if max_tokens is not None:
             primary = operation_route(self.config, operation, output_hint=max_tokens)
-        escalated = False
-        if thinking_boost > 0:
-            boosted = escalate_route_thinking(
-                self.config, primary, steps=thinking_boost, output_hint=max_tokens
-            )
-            escalated = boosted.fingerprint != primary.fingerprint
-            primary = boosted
         routes = [
             primary,
             *(
@@ -195,7 +174,6 @@ class RoutedLLMClient(LLMClient):
                 "adapter_protocol": (
                     provider_spec(route.provider_kind).adapter_type().protocol_version
                 ),
-                **({"thinking_boost": thinking_boost} if escalated else {}),
             }
 
             def emit(event: str, **payload) -> None:

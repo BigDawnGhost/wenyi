@@ -68,16 +68,15 @@ from .run import (
 # translate: batches, polishing, terminology, titles, context and precision drafts
 from .translate import (
     babeldoc_context,  # noqa: F401
-    bible_seed,  # noqa: F401
-    consistency_sweep,  # noqa: F401
     context,  # noqa: F401
     extraction_queue,  # noqa: F401
     glossary_notes,  # noqa: F401
+    parallel_chapters,  # noqa: F401
     polish_queue,  # noqa: F401
     post_normalize,  # noqa: F401
     precision,  # noqa: F401
     precision_records,  # noqa: F401
-    quote_memory,  # noqa: F401
+    seed_service,  # noqa: F401
     title_translation,  # noqa: F401
     translation,  # noqa: F401
     translation_batch,  # noqa: F401
@@ -93,15 +92,15 @@ __all__ = [
     "book_understanding",
     "translation",
     "translation_batch",
-    "polish_queue",
-    "extraction_queue",
-    "bible_seed",
-    "post_normalize",
-    "quote_memory",
     "title_translation",
     "glossary_notes",
     "context",
     "babeldoc_context",
+    "extraction_queue",
+    "parallel_chapters",
+    "polish_queue",
+    "post_normalize",
+    "seed_service",
     "precision",
     "precision_records",
     "annotations",

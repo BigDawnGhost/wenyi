@@ -7,7 +7,7 @@ language:
 
 # ── LLM ──────────────────────────────────────────────────────────────────
 llm:
-  preset: deepseek # Registers deepseek-flash for each operation; glossary.extract uses low thinking.
+  preset: deepseek # Registers deepseek-flash; glossary.extract and review.scan use low thinking.
   # Select a registered connection/model for each operation with routes.<operation>.model.
   # Optionally override its thinking effort with routes.<operation>.thinking.
   # Budget and quota estimates divide prompt bytes by 2.0 by default; set
@@ -23,21 +23,11 @@ segment:
 
 # ── Pipeline options (quality and cost)───────────────────────────────────────────
 pipeline:
-  # all: body batches get the full glossary (book-wide consistency, larger prompts).
-  # relevant: each batch gets only entries matching its source, next source, annotations
-  # and chapter digest; glossary extraction then sees only entries present in its batch.
-  # Reviewer requests always use the full glossary.
-  batch_glossary: all # all | relevant
-  # incremental: extract glossary entries after each batch.
-  # compiled: compile a frozen Book Bible upfront from digests + dual-context entropy probe,
-  # skipping hot-path per-batch extraction.
-  glossary_mode: incremental # incremental | compiled
-  # Optional glossary token cap per request (cl100k_base); 0 means no cap, so batch_glossary
-  # alone decides what is sent. With a cap, all mode keeps the append-stable leading run within
-  # it plus matching later entries, and relevant mode caps matched entries.
+  # Optional frozen glossary prefix cap in tokens (cl100k_base); 0 keeps the full entity glossary
+  # in the cached system prefix. Overflow and navigation entries are matched per batch in user.
   glossary_prompt_tokens: 0
-  # Optional ingest-time filter for domain promo watermarks, ad-network markers and lone >/| lines;
-  # add boilerplate_patterns for site-specific debris.
+  # Optional ingest-time filter for scraped-site watermarks, ad markers and lone >/| lines;
+  # add boilerplate_patterns for site-specific regular expressions.
   skip_boilerplate: false
   boilerplate_patterns: []
   review: true # Run final review after whole-book translation; disable with --no-review
@@ -47,15 +37,11 @@ pipeline:
   # full: rewrite every batch (default). sparse: source-grounded editor patching only defective paragraphs.
   polish_mode: full # full | sparse
   translation_mode: standard # standard | three_draft_synthesis; three_draft_synthesis requires polish
-  # Concurrent chapter drafting workers; 1 translates chapters serially with cross-chapter target context.
-  # Above 1, chapters translate concurrently with deterministic source lookbehind and a single storage writer.
+  # Concurrent chapter drafting workers; 1 translates serially with cross-chapter target context.
+  # Above 1, chapters translate concurrently using a lean CJK upfront glossary seed and a single writer.
   chapter_concurrency: 1
-  # Standard-mode polish workers; above 1, polishing runs in the background while translation continues.
+  # Background polish workers in serial mode; above 1, polishing overlaps subsequent batches.
   polish_concurrency: 1
-  # Zero-cost post-translation repair of leaked newline escapes; never rewrites punctuation or names.
-  deterministic_hygiene: true
-  # Fast post-translation cross-chapter sweep: patches missed glossary terms; title drift needs compiled mode.
-  consistency_sweep: false
   rolling_context_tokens: 512 # Recent translation budget in tokens (tiktoken cl100k_base)
   glossary_note_workers: 0 # Incremental evidence notes: 0 disables, 1-16 workers per batch
   book_understanding: true # Prescan complete chapters for digests and a whole-book synopsis; disable to save prescan cost
@@ -94,4 +80,3 @@ output:
   # true=preserve source styles; false=muted source in EPUB/HTML, normal body text in DOCX
   bilingual_preserve_source_style: false
   about_page: true # Append an About This Translation page
-  quote_style: preserve # preserve | typographic (English targets) | straight (Latin-script targets); export-only

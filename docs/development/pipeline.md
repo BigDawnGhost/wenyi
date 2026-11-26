@@ -65,15 +65,9 @@ is scoped by its parent target directory. Injected storage bypasses this lookup.
 
 With book understanding enabled, every nonempty chapter needs a complete digest
 before body work. A failed chunk or merge cannot publish a partial chapter digest.
-A failed synopsis group invalidates the whole synopsis; if regeneration fails while
-a previously saved non-empty synopsis exists, the run logs the failure and falls
-back to the saved stale synopsis without updating cache metadata so the next run
-retries regeneration. The synopsis keeps a snapshot of the `[target, type, gender]`
-mappings for terms matched in the chapter digests (accepting legacy version-3
-snapshots without forcing regeneration). Terms added later, unmatched terms, and
-note or alias edits reuse it; changing a matched term's target, type or gender,
-or removing a matched term, regenerates it. Preparation never extracts or seeds
-glossary entries.
+A failed synopsis group invalidates the whole synopsis; stale retained analysis must
+not be injected as a current synopsis. Preparation never extracts or seeds glossary
+entries.
 
 Prescan content budgets use the shared `cl100k_base` token estimator, not character
 counts or a provider-specific tokenizer. The source and reduction limits come from
@@ -105,20 +99,12 @@ For each body batch:
 1. Freeze the source, full ordered glossary and consumed context.
 2. Translate and optionally polish; validate shape before publication.
 3. Save formal targets, then align annotations/styles.
-4. Prepare extraction of the completed pairs from the current glossary. During a run
-   its model call overlaps the next batch's steps 1–3.
-5. On the run thread, store the terms and write the extraction checkpoint before the
-   next extraction is prepared, then refresh the glossary snapshot before the next
-   pending batch.
+4. Extract terms from the completed pairs and checkpoint that extraction.
+5. Refresh the glossary snapshot before the next pending batch if it changed.
 
-`ExtractionQueue` holds at most one pending job, and its worker only calls the model, so
-every extraction sees the glossary the serial order leaves and formal state keeps one
-writer. The next batch's frozen glossary lacks only the previous batch's new entries.
-An interrupted or stopped job is discarded without a checkpoint. A completed target
-batch with no glossary checkpoint requires extraction, not retranslation. A fully
-checkpointed batch skips both. Chapter completion follows its required batch and
-chapter-level work, so a chapter is published only after its chapter extraction is
-stored. Keep interruption tests at the boundaries
+A completed target batch with no glossary checkpoint requires extraction, not
+retranslation. A fully checkpointed batch skips both. Chapter completion follows
+its required batch and chapter-level work. Keep interruption tests at the boundaries
 between target persistence, alignment and glossary checkpointing.
 
 `wenyi_core.alignment` owns the format-independent text-location contract, not DOM,
@@ -220,38 +206,13 @@ next page opens with a table caption, the caption's first sentence is included
 before that paragraph. If there is no following prose in the section, only the
 caption's first sentence is included.
 
-The full glossary owns name mappings. It retains stable insertion order; EPUB
-navigation titles are tagged `navigation` and included in prompts only when they
-occur in the request text (existing legacy EPUB states with unannotated `term`
-navigation pairs keep their persisted glossary fingerprint for skip/resume, while
-`ReviewService.run_session` classifies them as `navigation` in-memory for review
-prompts and evidence without mutating stored rows). Fresh Reviewer requests share one final snapshot,
-scoped for navigation titles and fitted to the review model's `context_window`
-(bisecting multi-paragraph chunks on overflow). `pipeline.batch_glossary`
-selects each body batch's entries once, in `TranslationService.batch_terms`, and the
-batch plan carries them to translation, polish (inline, deferred and resumed) and
-precision; extraction filters its existing entries by the extracted source text. `Translator`
-places book-wide style guidance, whole-book synopsis and entity glossary entries at the end of
-`system` wrapped as untrusted reference blocks (keeping per-batch `navigation` titles, matched
-supplementary glossary notes and protected-object guidance outside that shared prefix, while
-remaining compatible with legacy frozen `translator_user` templates containing `$style`,
-`$book_synopsis` or `$glossary`). `SparseSemanticEditor` similarly places book-wide style
-guidance and entity glossary entries at the end of `system` as untrusted reference blocks and
-keeps per-batch `navigation` titles in `user`. When consecutive batches share the same entity
-glossary and synopsis without context-window shrinking (such as standard body batches under
-`batch_glossary: all`), both agents preserve a byte-identical leading prefix of `system` for
-KV caching across batches. Selective evidence and Fixer
+The full glossary owns name mappings. It retains stable insertion order, and fresh
+Reviewer requests share one complete final snapshot. Selective evidence and Fixer
 requests may use relevant subsets. Japanese readings are source metadata supported
 by explicit source evidence, not target-language transliterations; non-Japanese
 sources do not inject them through structured glossary rendering.
 
 Incremental notes are generated after translation by opted-in CLI or Web/Desktop project workflows. Preparation does not seed glossary entries and Review does not generate glossary notes.
-
-When `pipeline.glossary_mode` is `compiled`, `BibleSeedService` runs at the start of `TranslationService.run` (under the book lock, after chapter digests exist) using deterministic multilingual source/digest candidate mining (CJK, Japanese katakana/honorifics/ruby-stripped kanji, bicameral Latin/Greek/Cyrillic with connectors, and unicameral scripts), a dual-context entropy probe, morpheme-family clustering, and chunked global adjudication on the `glossary.extract` route. It compiles canonical glossary entries (the adjudication prompt leaves gender unknown for disguised or later-revealed characters; no pronoun-counting heuristic overrides the adjudicated gender), compact book-wide translation conventions (including a divergent/high-frequency title ledger for recurring offices and ranks), cached cross-chapter voice exemplars, and pre-rendered cross-chapter repeated quotes so parallel workers share identical voice and callbacks. It mines every chapter's digest even when `only_chapter` is set. It caches its result in the `glossary_bible.json` artifact keyed by source hash, digests, synopsis hash, style brief, locked user glossary snapshot, repeated quotes, language direction and routing identity; a failed or malformed probe or adjudication raises instead of caching an empty or partial Bible, so a resumed run compiles again. Once adjudication succeeds, its terms, variants, conventions and title ledger are checkpointed in `glossary_bible.checkpoint.json` (with usage persisted first), and repeated-quote renderings are added before the voice pass; a run interrupted after adjudication resumes from that checkpoint, runs only the remaining quote or voice calls and produces the same Bible as an uninterrupted run. Compiled terms stay staged until `glossary_bible.json` is written and are then published to the glossary idempotently (a resumed run finishes a stopped publication without repeating conflicts), so an unfinished compilation never changes the glossary a later recompile sees. The checkpoint is deleted after publication. It inserts new entries with `first_chapter = 0` without overwriting user-imported or manually edited entries (`first_chapter is None`), and skips hot-path per-batch and chapter-end extraction.
-
-When `pipeline.chapter_concurrency` is above `1` in standard mode with `glossary_mode: compiled`, `TranslationService` translates chapters (or 6-batch waves of single chapters exceeding 12 batches) concurrently: workers perform model calls only (`translate`, optional `full` or `sparse` polish) with wave-local cloned `QuoteMemory` snapshots and never touch `Storage`, SQLite, adherence or usage ledgers. Opening context for each chapter or wave uses a deterministic positional rule—the preceding chapter's digest plus its last three immutable source paragraphs—so thread completion order never changes chapter content or resume outputs. The main coordinator thread persists chapters, alignments, events and usage in strict book order. Non-body BabelDOC batches get no rolling context, synopsis or digest, as in the serial path. When a batch fails, its wave returns the batches drafted before it, no new waves start, and every drafted batch is saved; chapters after the failure in book order are not published, so resume translates only the missing batches. Saved drafts still marked for polish are repolished before their chapter is published.
-
-When `pipeline.polish_mode` is `sparse`, `SparseSemanticEditor` pre-screens `(source, draft)` pairs with deterministic structural detectors (`batch_risk`—covering script/furigana residue, inline translator notes opened by a marker listed in the target language profile (`inline_gloss_markers`, e.g. "lit.", "litt.", "直译"), severe omission length drops, glossary canonical misses, and unlineated standalone or embedded verse—only multi-line poems, contiguous runs of 5- or 7-character classical couplets, or explicit verse recitations and poetry words, never ordinary prose dialogue or quotations), passes compact alerts as prompt hints while strictly honoring the configured `polish.body` thinking level, and emits JSON patches only for paragraphs with concrete fidelity, allusion or formatting defects—preserving protected-object markers and guarding against gratuitous style rewrites (measured per character in unspaced scripts). `QuoteMemory` indexes repeated source quotations across the book to reuse established renderings consistently, `batch_segments` keeps contiguous multi-couplet verse blocks unbroken within bounded token slack, `pipeline.deterministic_hygiene` repairs leaked literal `\n` escapes glued to the text (only when the source paragraph has none) before chapter publication, and optional `pipeline.consistency_sweep` runs a fast post-translation cross-chapter pass before title translation (patching missed glossary entities and adjudicating/patching lexical or capitalization drift in English renderings of titles the Book Bible flagged as divergent, where an active glossary entry decides the rendering and disputed entries are skipped; other source n-grams are not mined) without mutating offset-bound aligned segments. Deterministic post-processing must stay grounded in the paragraph's own source or in observed glossary evidence: it never rewrites quotation marks, dashes, speech tags, line layout or names (probe-observed name variants feed the sparse editor as evidence instead), never overwrites a repeated paragraph with an earlier chapter's rendering, and never resolves an open glossary conflict, because those rules held for one book and corrupted correct text in other languages, genres and house styles.
 
 <a id="storage-and-artifacts"></a>
 
@@ -312,8 +273,7 @@ fails; never reinterpret a diagnostic as successful work.
 | Cached work | Inputs that matter |
 | --- | --- |
 | Parsed source | Source content and parsing configuration |
-| Chapter digest/style | Consumed source or summaries, task policy, and model configuration |
-| Book synopsis | Chapter digests, synopsis policy, style guidance, languages, the `synopsis.book` inference identity, and its glossary mapping snapshot |
+| Chapter digest/style/synopsis | Consumed source or summaries, task policy, and model configuration; synopsis also binds its actual guidance inputs |
 | Translation precision | Source and stable segment plan, context, glossary, translation policy and effective inference identity |
 | Annotation/style placement | Complete logical target digest and source item identities |
 | Review | Reviewed content, ordered full glossary including all metadata, guidance, policy, Review options and reachable inference identities |
@@ -329,26 +289,7 @@ Invalid provider/JSON/semantic responses are failures, not negative evidence cac
 A successfully validated response that supports no mapping is different: historical
 term alignment can cache that unresolved decision for the exact request without
 repeating calls or diagnostics. Never use cached uncertainty to overwrite a manual
-glossary decision. History alignment locates a term's first translation by substring,
-so it skips one-character sources (孤 also occurs in 孤舟) and keeps the batch's own
-target when a name would align to cased wording without a capital letter while the batch
-rendered it with one (横江 in 白露横江). One-character sources are left out before the
-request is built, so they change its cache key; the capital-letter guard runs after the
-cached or fresh decision and leaves cached requests valid.
-
-Leaving overridden entries out of prompts (`glossary/adherence.py`) is derived state, not a
-glossary write. The counts come only from saved source and draft pairs, reading
-`target_before_polish` when present so background polish timing cannot change them: the
-run seeds them from `load_translation_inputs` and adds each batch after its targets are
-saved, so a resumed run reaches the same decision without a checkpoint. Paragraphs are
-keyed by chapter and paragraph index, so arrival order (`--chapter N` before a full run)
-does not matter. Only the entry's own source is counted, not aliases, and counting
-starts at the earliest paragraph in book order that uses the current target, so a
-user's correction is not judged on paragraphs earlier in the book than its first use. Only extracted entries
-(`first_chapter` set) qualify. Imports and manual additions never set it, and an explicit
-edit (`update_term`) or conflict resolution (`resolve_term`) clears it in every storage
-adapter, so user decisions and context-dependent entries are always sent. The decision filters the snapshot that body translation and polish receive; glossary
-extraction and Review still read the full glossary.
+glossary decision.
 
 <a id="precision-checkpoints"></a>
 
@@ -407,14 +348,6 @@ and value limits. Each agent keeps its own turn budget, output validation and re
 Reviewer output requires a completion receipt matching the exact reviewed-segment
 count. Do not accept truncated output by inventing missing JSON content. Invalid
 receipts split only the affected chunk; single-segment output retries are bounded.
-`Reviewer.review_result` places the book-wide entity `[Glossary]` at the end of the
-`system` message and keeps per-chunk matched `navigation` titles in the `user` message
-so consecutive review blocks share a byte-identical prefix on a complete message
-boundary while the glossary fits within the model context window (legacy frozen
-`reviewer_user` templates containing `$glossary` remain compatible). Review blocks
-across chapters share one bounded worker pool sized to `review_concurrency`, flushing
-buffered chunk events, `review_chapter_finished`, and merged issues in deterministic
-source order.
 Unverified candidates or unresolved arbitration cannot bypass publication checks.
 `not_rereported` records a later observation, not proof of correctness.
 

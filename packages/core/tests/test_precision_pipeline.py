@@ -362,16 +362,13 @@ def test_publication_refuses_manual_target_changes(tmp_path):
     assert store.load_chapter(0).segments[0].target == "人工编辑"
 
 
-@pytest.mark.parametrize("polish_concurrency", [1, 4])
-def test_cli_exports_and_resumes_with_four_body_calls(tmp_path, monkeypatch, polish_concurrency):
+def test_cli_exports_and_resumes_with_four_body_calls(tmp_path, monkeypatch):
     from typer.testing import CliRunner
     from wenyi_cli.cli import app
 
     source, output = tmp_path / "sample.txt", tmp_path / "translated.txt"
     source.write_text("one\n\ntwo\n", encoding="utf-8")
     config, handler = _config(tmp_path / "state"), Handler()
-    # Precision synthesis is the polish step; the background pool does not apply.
-    config.pipeline.polish_concurrency = polish_concurrency
     client = MeteredFakeClient(handler=handler)
     monkeypatch.setattr("wenyi_cli.commands.context.CommandContext.load_config", lambda *_: config)
     monkeypatch.setattr("wenyi_core.pipeline.run.runtime.build_client", lambda *_: client)

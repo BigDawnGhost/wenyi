@@ -1,11 +1,6 @@
 {
   "label": "Russian",
   "english_name": "Russian",
-  "inline_gloss_markers": [
-    "букв.",
-    "дословно",
-    "прим. пер."
-  ],
   "source_guidance": "Interpret Russian inflection, verbal aspect, patronymics and forms of address, preserving their relationship information.",
   "target_guidance": "Use natural Russian with correct Cyrillic spelling, inflection, verbal aspect and forms of address. Do not transliterate into Latin letters without a reason.",
   "punctuation_rule": "Follow Russian publishing conventions for quotes, dashes and punctuation. Preserve symbol structure, repetition and pairing.",

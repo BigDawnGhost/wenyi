@@ -41,39 +41,6 @@ prefix reuse may help provider caching but does not guarantee a cache hit.
 None of these options guarantees a more accurate translation; compare representative
 passages and review important results yourself.
 
-<a id="reasoning-effort"></a>
-
-### Reasoning effort by stage
-
-On reasoning models, hidden thinking tokens often account for the largest share of
-output spend and wall-clock latency. You can override `thinking` per operation in
-`llm.routes` (see [connections, profiles, and routes](../reference/configuration.md#model-profiles)):
-
-| Operation | Recommended setting | Trade-off |
-| --- | --- | --- |
-| `translation.body` | `thinking: "off"` under `nextgen` (`polish_mode: sparse`); keep reasoning on without sparse polishing | In controlled A/B runs on DeepSeek V4.1 Flash under `nextgen`, turning reasoning off cut body completion tokens by ~71% while blind judges rated the final polished prose near parity with `high` (`8.35` vs `8.40` / 10). |
-| `glossary.align_history` | `thinking: "off"` | Small alignment calls; disabling reasoning cut completion tokens by ~85% and ran ~3× faster with exact match parity. |
-| `glossary.extract` | `thinking: low` (do **not** disable) | Enough to extract names reliably while much faster than `high`. Disabling reasoning risks wrong mappings for forms of address in `incremental` mode, and in `compiled` (Book Bible) mode lets common-word/substring noise into the glossary, which then triggers false `glossary_miss` alerts during polishing. |
-| `polish.body` | `thinking: low` under `polish_mode: sparse` | Keeps batches fast and predictable; `polish.body` strictly honors the configured thinking level (raise it to `medium` or `high` explicitly for unusually dense classical texts). |
-
-Quote `"off"` in YAML so it is parsed as a string rather than boolean `false`, and enable sparse polishing when disabling reasoning on `translation.body`:
-
-```yaml
-pipeline:
-  polish: true
-  polish_mode: sparse
-
-llm:
-  routes:
-    translation.body: {model: deepseek/deepseek-flash, thinking: "off"}
-    polish.body: {model: deepseek/deepseek-flash, thinking: low}
-    glossary.extract: {model: deepseek/deepseek-flash, thinking: low}
-    glossary.align_history: {model: deepseek/deepseek-flash, thinking: "off"}
-```
-
-Exact savings and quality vary by model family and language pair; spot-check a few
-chapters before applying lower effort to a full book.
-
 <a id="preparation"></a>
 
 ## Preparation before translation
@@ -108,8 +75,8 @@ An unfinished chapter's individual prescan chunks are not separately checkpointe
 ## Translation context and the glossary
 
 Chapters and body batches progress in source order. A normal batch receives style
-guidance, the book synopsis, the **current glossary** (full or batch-relevant, see
-below), its chapter digest, relevant source notes, recent translated text, the requested source, and one following
+guidance, the book synopsis, its chapter digest, the **full current glossary**,
+relevant source notes, recent translated text, the requested source, and one following
 source segment as a read-only reference. The following segment helps with continuity;
 it is not translated early or included in the expected output count.
 
@@ -120,84 +87,16 @@ paragraph contributes only its tail. Setting the budget to zero removes precedin
 translation, not the following source reference. BabelDOC uses a
 [layout-aware context boundary](../reference/formats.md#babeldoc) instead.
 
-<a id="deferred-polishing"></a>
-
-With `pipeline.polish_concurrency` above 1 in standard mode, polishing no longer
-blocks translation. Each draft is saved and queued for polishing, and the next batch
-starts at once. Recent-translation context and glossary extraction always read the
-unpolished drafts, so results do not depend on when polishing finishes. This trades a
-little continuity for throughput with a slow polisher. A chapter is marked done only after all its polish
-jobs are applied. Annotation alignment runs on the polished text. If polishing fails
-or returns the wrong paragraph count, the draft stays as the translation and a
-`batch_polish_failed` event is recorded. An interrupted run repolishes the saved
-drafts on resume and does not translate them again.
-
-Ordinary glossary extraction (`pipeline.glossary_mode: incremental`) starts with completed
-source-and-translation pairs. Without imported terms, the first batch therefore has no
-predefined mappings. New terms and conflicts inform later batches; they do not automatically
-rewrite earlier translations. Each batch's extraction runs while the next batch translates, so
-a new entry reaches the batch after that; the next batch still sees the previous batch's
-wording in its recent-translation context. A chapter is marked done only after its
-terms are stored. The glossary is authoritative for name mappings, while style
+Ordinary glossary extraction starts with completed source-and-translation pairs.
+Without imported terms, the first batch therefore has no predefined mappings.
+New terms and conflicts inform later batches; they do not automatically rewrite
+earlier translations. The glossary is authoritative for name mappings, while style
 guidance retains source identities and descriptive character information.
 
-With `pipeline.glossary_mode: compiled`, Wenyi instead mines recurring entities from chapter
-digests and the source text, probes and adjudicates a frozen Book Bible before chapter 1, and
-skips per-batch and chapter-end extraction completely (eliminating the one-batch lag and
-unlocking `pipeline.chapter_concurrency` above 1). User-imported and manually edited entries
-are preserved unchanged.
-
-By default (`pipeline.batch_glossary: all`) each pending body batch receives all
-current entity mappings, while newly stored EPUB navigation titles (`navigation`) are
-included only when they occur in that request's text (legacy projects with older
-`term`-typed navigation rows get this scoping automatically in Review). With `batch_glossary: relevant`, each batch instead receives only
-entries whose source or aliases occur in its source paragraphs, the following-source
-reference, its annotation contexts or the chapter digest, and glossary extraction
-sees only existing entries that occur in the extracted text. A long book's full
-glossary can grow to tens of thousands of tokens per request, so `relevant` is the
-cheaper choice for long books. `pipeline.glossary_prompt_tokens` is an optional cap
-and is off (`0`) by default. When set, `all` keeps its append-stable leading entries
-within the cap (preserving prefix caches) plus the later entries matching that batch,
-and `relevant` sends only the matching entries that fit. Before sending a request, Wenyi also checks
-estimated prompt tokens plus output reserve against the model's `context_window`,
-shrinking the glossary or raising an actionable error rather than overflowing the
-provider limit. A paragraph that names a
-character only by pronoun or title then relies on the digest and recent translations
-for that mapping. Fresh Reviewer requests receive the final entity glossary plus any
-navigation titles occurring in the reviewed chunk, fitted to the review model's
-`context_window` (and split automatically if a multi-paragraph chunk still overflows).
-Evidence queries and individual Fixers can use relevant subsets. Each
-`batch_translated` event records the entries (`glossary_terms`) it sent and an
-estimate of the glossary block's `cl100k_base` tokens (`glossary_tokens`).
-
-Extraction therefore keeps the glossary selective: names, book-specific terms,
-recurring forms of address and fixed expressions, not everyday vocabulary, one-off
-descriptions or single lines. Wenyi also enforces this without the model: a new entry
-whose source occurs only once in the whole book is not stored, and for Chinese sources
-self-references and forms of address whose wording depends on speaker and listener
-(such as 孤, 本王, 大人 or 公子) and one-character common words are not stored either;
-one-character names such as 蜀 are kept. An extracted translation that differs from the
-stored one only in case, spacing, a leading "the" or a final stop is not recorded as a
-conflict; glossary imports and manual edits still compare exactly.
-
-Two further checks need no word list for the source language. When translating into
-English, an extracted entry whose translation is only pronouns and title words ("I",
-"your son", "Your Excellency") is not stored, while "Lord Jiang" keeps its name and
-stays. During translation, an extracted entry that the finished translation keeps
-overriding is left out of later translation and polish prompts. Counting starts at the
-earliest draft paragraph, in book order, that uses its stored translation, so paragraphs
-earlier in the book than a corrected translation's first use do not count against it; once its source has appeared in
-at least five such paragraphs and fewer than 35% use the translation, it is left out.
-The entry stays in the glossary. Entries you import, add, edit or resolve are always
-sent. A `glossary_terms_left_out` event records each change. Translations are matched
-as written, so in a target language that inflects names (Russian "Лондоне" for
-"Лондон") an entry the translator follows can still be left out.
-
-Extraction runs after every batch and once per chapter. The DeepSeek preset runs
-`glossary.extract` at `thinking: low`, which is enough to read names off a finished
-translation and takes far less time than high effort. For per-stage reasoning
-recommendations—and why `glossary.extract` should stay at `low` rather than `"off"`—see
-[Reasoning effort by stage](#reasoning-effort).
+Each pending body batch receives all current mappings, including terms absent from
+its chapter. Fresh Reviewer requests receive the complete final glossary.
+This favors book-wide consistency at the cost of larger prompts. Evidence queries
+and individual Fixers can use relevant subsets.
 
 After EPUB body translation, Wenyi completes the parsed navigation tree and adds its
 source-and-translation pairs to the glossary before final Review, including nested,

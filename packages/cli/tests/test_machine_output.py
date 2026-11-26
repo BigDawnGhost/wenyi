@@ -143,27 +143,6 @@ def test_receipt_never_claims_missing_outputs(workflow, tmp_path, monkeypatch):
     assert json.loads(result.read_text())["status"] == "failed"
 
 
-def test_machine_progress_renders_pipeline_keys_in_english(tmp_path):
-    from wenyi_cli.commands.machine_output import MachineOutput
-
-    source = tmp_path / "book.epub"
-    source.write_bytes(b"source")
-    progress = tmp_path / "progress.json"
-    machine = MachineOutput(
-        str(progress),
-        None,
-        source=str(source),
-        config=str(tmp_path / "config.yaml"),
-        output=None,
-    )
-    machine(0, 0, "progress.stage.parsing")
-    assert json.loads(progress.read_text())["label"] == "Parsing document…"
-    machine(1, 4, "progress.stage.reviewRound:1")
-    assert json.loads(progress.read_text())["label"] == "Whole-book review R1"
-    machine(2, 4, "progress.stage.chapter:2 · Generating three translations")
-    assert json.loads(progress.read_text())["label"] == "Chapter 2 · Generating three translations"
-
-
 def _write_temp_config(tmp_path):
     config = tmp_path / "config.yaml"
     config.write_text(

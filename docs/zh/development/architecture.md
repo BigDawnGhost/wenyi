@@ -32,7 +32,7 @@ Core 路径相对于 `packages/core/wenyi_core/`；应用与包路径相对于�
 | 原文准备 | `pipeline/prepare/input_preparation.py` 负责无模型解析、源文/配置身份与原文快照，由 CLI `parse`、Backend 预览和 `PreparationService` 共用。`packages/backend/wenyi_backend/source_view.py` 提供未初始化章节的只读原文投影；`pipeline/prepare/preparation.py` 协调初始化，并最后提交 manifest。 |
 | 全书理解 | `pipeline/prepare/book_understanding.py` 拥有章节 digest、全书 synopsis、稳定顺序并发与可续跑缓存，显式接收 Agent/配置/用量，不接收整个 Runtime。 |
 | 运行时与记账 | `pipeline/run/runtime.py` 装配 client/Agent 并绑定语言与计时；`pipeline/run/runtime_usage.py` 拥有唯一用量检查点，通过消费者所需的账本协议执行可恢复书籍/Review 发布。 |
-| 翻译 | `pipeline/translate/translation.py` 协调翻译；`translation_batch.py` 返回显式批次结果；`polish_queue.py` 在后台有界并发润色，由章节服务应用结果；`title_translation.py` 处理标题。 |
+| 翻译 | `pipeline/translate/translation.py` 协调翻译；`translation_batch.py` 返回显式批次结果；`title_translation.py` 处理标题。 |
 | 全书审校 | `pipeline/review/review_workflow.py` 协调会话；`review_checkpoint.py`、`review_rounds.py`、`review_chunks.py` 和 `review_results.py` 分别处理恢复、决策、执行和结果。 |
 | 自动修复 | `pipeline/autofix/review_autofix.py` 协调独立发布服务；`autofix_candidates.py`、`autofix_plan.py` 和 `autofix_publish.py` 分离候选、可恢复索引与正式译文写回。 |
 | 审校 Agent | `agents/review_*.py` 负责模型交互；`review/` 提供共享证据、类型和运行产物，不依赖 pipeline 编排。 |

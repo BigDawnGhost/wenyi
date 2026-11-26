@@ -59,7 +59,7 @@ test("running review shows its own progress and a ticking task timer, not zero r
         project_id: pid,
         run_id: "task-a",
         kind: "review",
-        label: "progress.stage.reviewRound:1",
+        label: "Whole-book review R1",
         done: 37,
         total: 100,
         elapsed_seconds: 40,
@@ -266,7 +266,7 @@ test("unrelated cached progress is rejected and missing totals do not invent per
   progress = {
     project_id: pid,
     run_id: "task-a",
-    label: "progress.stage.reviewCheckpoint",
+    label: "Restoring review checkpoint…",
     done: 0,
     total: 0,
   };
@@ -314,7 +314,7 @@ test("paused review freezes elapsed time and retains unfinished findings in Chin
       progress: {
         project_id: pid,
         run_id: "task-a",
-        label: "progress.stage.reviewRound:1",
+        label: "Whole-book review R1",
         done: 5,
         total: 10,
         elapsed_seconds: 45,
@@ -367,7 +367,7 @@ test("new review preparation identifies the previous result and ignores stale so
       progress: {
         project_id: pid,
         run_id: "task-b",
-        label: "progress.stage.reviewChapters",
+        label: "Loading review chapters",
         done: 0,
         total: 0,
         updated_at: "2026-09-17T09:00:00Z",
@@ -402,38 +402,4 @@ test("new review preparation identifies the previous result and ignores stale so
   await expect(
     page.getByText("Reviewing the book · round 99", { exact: true }),
   ).toHaveCount(0);
-});
-
-test("review phase keys inside a translation job show the activity panel and round", async ({
-  page,
-}) => {
-  await fakeApi(page, {
-    [`/projects/${pid}`]: { ...project, status: "translating" },
-    [`/projects/${pid}/review/runs`]: [run],
-    [`/projects/${pid}/review/runs/${run.id}`]: run,
-    [`/projects/${pid}/workflow`]: {
-      ...workflow,
-      kind: "translation",
-      status: "running",
-      run_id: "task-c",
-      review_id: run.id,
-      progress: {
-        project_id: pid,
-        run_id: "task-c",
-        kind: "translation",
-        label: "progress.stage.reviewRound:2",
-        done: 12,
-        total: 40,
-        elapsed_seconds: 25,
-        updated_at: "2026-09-17T09:00:40Z",
-      },
-    },
-  });
-  await page.goto(`/projects/${pid}/review`);
-  await expect(
-    page.getByRole("heading", { name: "Independent review · round 2", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("progressbar", { name: "Current stage progress" }),
-  ).toHaveAttribute("aria-valuenow", "12");
 });

@@ -30,7 +30,7 @@ language:
 
 # ── LLM ──────────────────────────────────────────────────────────────────
 llm:
-  preset: deepseek # Registers deepseek-flash for each operation; glossary.extract uses low thinking.
+  preset: deepseek # Registers deepseek-flash; glossary.extract and review.scan use low thinking.
   # Select a registered connection/model for each operation with routes.<operation>.model.
   # Optionally override its thinking effort with routes.<operation>.thinking.
   # Budget and quota estimates divide prompt bytes by 2.0 by default; set
@@ -46,21 +46,11 @@ segment:
 
 # ── Pipeline options (quality and cost)───────────────────────────────────────────
 pipeline:
-  # all: body batches get the full glossary (book-wide consistency, larger prompts).
-  # relevant: each batch gets only entries matching its source, next source, annotations
-  # and chapter digest; glossary extraction then sees only entries present in its batch.
-  # Reviewer requests always use the full glossary.
-  batch_glossary: all # all | relevant
-  # incremental: extract glossary entries after each batch.
-  # compiled: compile a frozen Book Bible upfront from digests + dual-context entropy probe,
-  # skipping hot-path per-batch extraction.
-  glossary_mode: incremental # incremental | compiled
-  # Optional glossary token cap per request (cl100k_base); 0 means no cap, so batch_glossary
-  # alone decides what is sent. With a cap, all mode keeps the append-stable leading run within
-  # it plus matching later entries, and relevant mode caps matched entries.
+  # Optional frozen glossary prefix cap in tokens (cl100k_base); 0 keeps the full entity glossary
+  # in the cached system prefix. Overflow and navigation entries are matched per batch in user.
   glossary_prompt_tokens: 0
-  # Optional ingest-time filter for domain promo watermarks, ad-network markers and lone >/| lines;
-  # add boilerplate_patterns for site-specific debris.
+  # Optional ingest-time filter for scraped-site watermarks, ad markers and lone >/| lines;
+  # add boilerplate_patterns for site-specific regular expressions.
   skip_boilerplate: false
   boilerplate_patterns: []
   review: true # Run final review after whole-book translation; disable with --no-review
@@ -70,15 +60,11 @@ pipeline:
   # full: rewrite every batch (default). sparse: source-grounded editor patching only defective paragraphs.
   polish_mode: full # full | sparse
   translation_mode: standard # standard | three_draft_synthesis; three_draft_synthesis requires polish
-  # Concurrent chapter drafting workers; 1 translates chapters serially with cross-chapter target context.
-  # Above 1, chapters translate concurrently with deterministic source lookbehind and a single storage writer.
+  # Concurrent chapter drafting workers; 1 translates serially with cross-chapter target context.
+  # Above 1, chapters translate concurrently using a lean CJK upfront glossary seed and a single writer.
   chapter_concurrency: 1
-  # Standard-mode polish workers; above 1, polishing runs in the background while translation continues.
+  # Background polish workers in serial mode; above 1, polishing overlaps subsequent batches.
   polish_concurrency: 1
-  # Zero-cost post-translation repair of leaked newline escapes; never rewrites punctuation or names.
-  deterministic_hygiene: true
-  # Fast post-translation cross-chapter sweep: patches missed glossary terms; title drift needs compiled mode.
-  consistency_sweep: false
   rolling_context_tokens: 512 # Recent translation budget in tokens (tiktoken cl100k_base)
   glossary_note_workers: 0 # Incremental evidence notes: 0 disables, 1-16 workers per batch
   book_understanding: true # Prescan complete chapters for digests and a whole-book synopsis; disable to save prescan cost
@@ -117,7 +103,6 @@ output:
   # true=preserve source styles; false=muted source in EPUB/HTML, normal body text in DOCX
   bilingual_preserve_source_style: false
   about_page: true # Append an About This Translation page
-  quote_style: preserve # preserve | typographic (English targets) | straight (Latin-script targets); export-only
 """
 
 
@@ -156,13 +141,7 @@ class PipelineConfig(BaseModel):
             return {key: value for key, value in raw.items() if key != "terminology_context"}
         return raw
 
-    # Glossary lifecycle: "incremental" extracts per batch; "compiled" builds a frozen Book Bible
-    # from digests + dual-context entropy probing before chapter 1 and skips hot-path extraction.
-    glossary_mode: Literal["incremental", "compiled"] = "incremental"
-    # Glossary sent to body translation, polish, precision and extraction requests:
-    # "all" keeps book-wide consistency; "relevant" sends only entries matching each batch.
-    batch_glossary: Literal["all", "relevant"] = "all"
-    # Optional per-request glossary token cap (cl100k_base); 0 means no cap.
+    # Optional frozen glossary prefix cap in tokens (cl100k_base); 0 means no cap.
     glossary_prompt_tokens: int = Field(default=0, ge=0)
     # Optional ingest-time scraped-site boilerplate filter (off by default).
     skip_boilerplate: bool = False
@@ -182,7 +161,7 @@ class PipelineConfig(BaseModel):
                 re.compile(raw)
             except re.error as exc:
                 raise ValueError(
-                    f"Invalid regex in pipeline.boilerplate_patterns[{index}] ({raw!r}): {exc}"
+                    f"Invalid regex in pipeline.boilerplate_patterns[{index}]: {exc}"
                 ) from exc
         return value
 
@@ -190,17 +169,12 @@ class PipelineConfig(BaseModel):
     # Additional structural retries for standard translation and precision generation/synthesis.
     align_retry_limit: int = 2
     polish: bool = True  # Polish the full translation by default; disable to save cost
-    # "full" rewrites every batch; "sparse" runs a source-grounded semantic editor patching only defects.
+    # full: rewrite every batch (default). sparse: source-grounded editor patching only defects.
     polish_mode: Literal["full", "sparse"] = "full"
-    # Concurrent chapter drafting workers; >1 uses deterministic source lookbehind and a single writer.
+    # Concurrent chapter drafting workers; >1 seeds a frozen CJK glossary and writes in order.
     chapter_concurrency: int = Field(default=1, ge=1, le=16)
-    # Above 1, standard-mode polish jobs run in a bounded background pool while translation
-    # continues; 1 polishes each batch inline. Ignored by three_draft_synthesis.
-    polish_concurrency: int = Field(default=1, ge=1)
-    # Repair leaked newline escapes (no model calls); punctuation and names are never rewritten.
-    deterministic_hygiene: bool = True
-    # Fast cross-chapter sweep: missed glossary terms, plus Book Bible title drift in compiled mode.
-    consistency_sweep: bool = False
+    # Background polish workers in serial mode; >1 overlaps polish with subsequent batches.
+    polish_concurrency: int = Field(default=1, ge=1, le=8)
     rolling_context_tokens: int = Field(default=512, ge=0)
     # Note generation requires an opted-in workflow runner.
     glossary_note_workers: int = Field(default=0, ge=0, le=16)
@@ -211,7 +185,9 @@ class PipelineConfig(BaseModel):
 
     # Prescan for a synopsis and chapter digests; disable to save prescan cost.
     book_understanding: bool = True
-    prescan_concurrency: int = 4  # Concurrent prescan workers for chapter digests and book-synopsis reduction; 1 runs serially
+    prescan_concurrency: int = (
+        4  # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
+    )
     # Prescan content budgets in cl100k_base tokens, excluding prompt/context overhead.
     synopsis_source_tokens: int = Field(default=8000, gt=0)
     synopsis_reduce_tokens: int = Field(default=12000, gt=0)
@@ -263,7 +239,6 @@ class OutputConfig(BaseModel):
     )
     bilingual_preserve_source_style: bool = False  # EPUB/HTML styling and DOCX source metadata
     about_page: bool = True  # Append the project about page
-    quote_style: Literal["preserve", "typographic", "straight"] = "preserve"
 
 
 class LanguageConfig(BaseModel):

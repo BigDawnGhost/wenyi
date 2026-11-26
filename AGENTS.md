@@ -2,6 +2,15 @@
 
 本文件适用于整个仓库；更深层的 `AGENTS.md` 在其范围内优先。
 
+## Fork scope & guardrails (ZH→EN web novels on DeepSeek)
+
+This fork (`CorruptedKnowledge/wenyi`) optimizes **lower cost, faster throughput, and higher translation quality specifically for Chinese→English web novels** (and future Japanese/Korean→English) on **DeepSeek** inside **Wenyi Desktop**. Everything else is upstream's responsibility.
+
+- **Scope fence:** Do NOT add Latin/Cyrillic/Greek/Arabic/Indic miners, morphological stemmers, LaTeX math rules, technical-manual/academic heuristics, literary epigraph engines, or deterministic prose/punctuation/quote rewriters. Language-specific translation guidance belongs in `packages/core/wenyi_core/i18n/data/pairs/zh__en.json` (or `ja__en.json`), never in Python regexes.
+- **No book-specific regex heuristics:** Allowed deterministic transforms are strictly (a) leaked literal `\n` repair when absent from the source (`post_normalize.py`), (b) protected-object marker integrity, and (c) opt-in scraped-site watermark skipping (`boilerplate.py`). Fix translation defects via prompts, glossary, continuation-aware sparse polish, or Review — never one-book Python rewrites.
+- **DeepSeek KV prefix caching first:** Keep book-wide style, synopsis, and the frozen entity glossary in a byte-stable `system` prefix; keep per-batch overflow terms, matched navigation titles, and local notes in `user`. Never re-introduce per-batch system-glossary mutation (`batch_glossary: relevant`) or mid-run prefix deletion (`adherence.py`).
+- **One clean pipeline & hard size caps:** Do not add dual preset matrices (`classic`/`nextgen`) or duplicate post-passes (`consistency_sweep.py`). `packages/core/tests/test_architecture_boundaries.py` enforces `translation.py <= 900` lines and forbids re-introducing retired bloat modules. Keep generic bugfixes clean and upstreamable.
+
 ## 动手前先读对应的开发文档
 
 设计、修改或审查代码前，先按**受影响的行为**从[开发文档索引](docs/development/index.md#find-the-owning-layer)找到负责该主题的文档，阅读相关章节，再决定实现和验证方式。跨层改动分别查阅涉及的契约，不必通读整套文档。常见入口：

@@ -277,7 +277,7 @@ for (const kind of ["translation", "review"] as const) {
       [`/projects/${pid}/workflow`]: {
         ...workflow, kind, status: "running", review_id: run.id,
         progress: {
-          kind, project_id: pid, run_id: "run-a", label: "progress.stage.reviewRound:1",
+          kind, project_id: pid, run_id: "run-a", label: "Whole-book review R1",
           done: 37, total: 100, elapsed_seconds: 40, updated_at: updated,
         },
       },

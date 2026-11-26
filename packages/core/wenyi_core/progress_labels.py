@@ -21,8 +21,7 @@ _ENGLISH = {
     "style": "Analyzing book style…",
     "synopsis": "Generating whole-book synopsis…",
     "prescan": "Prescanning chapter digests",
-    "compilingBible": "Compiling Book Bible…",
-    "consistencySweep": "Running cross-chapter consistency sweep…",
+    "seedingGlossary": "Seeding CJK glossary…",
     "translationDone": "Translation complete",
     "assembling": "Assembling translation…",
     "reviewChapters": "Loading review chapters",
@@ -33,6 +32,7 @@ _ENGLISH = {
     "arbitration": "Conflict arbitration R{n}",
     "shadowRevision": "Shadow revision R{n}",
     "publishingAutofix": "Publishing Review Autofix",
+    "outagePaused": "Provider temporarily unavailable — paused",
     "chapter": "Chapter {n}",
 }
 

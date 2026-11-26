@@ -92,7 +92,6 @@ class AssemblyService:
                     if bilingual
                     else False,
                     about_page=out_cfg.about_page,
-                    quote_style=out_cfg.quote_style,
                     babeldoc_timeout=self._runtime.config.pipeline.babeldoc_timeout,
                     language_policy=plans[bilingual],
                 )

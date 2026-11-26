@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from copy import deepcopy
 
 from .epub_reader import read_epub
@@ -199,144 +199,18 @@ def load_document(
     return doc
 
 
-_CJK_COUPLET_RE = re.compile(
-    r"^([\u3400-\u9fff\uf900-\ufaff]{5,7})[，、；]([\u3400-\u9fff\uf900-\ufaff]{5,7})[。；]?$"
-)
-_VERSE_DIALOGUE_MARKS = frozenset('“”"「」『』')
-# Classical shi metre: a standalone couplet line is pentasyllabic or heptasyllabic.
-_COUPLET_HEMISTICH_LENGTHS = frozenset({5, 7})
-# Modern vernacular particles and pronouns (Simplified + Traditional) rare in classical verse lines.
-_VERNACULAR_PARTICLES = frozenset("的着著吗嗎呢吧们們这這那她您")
-
-
-def is_verse_segment(text: str) -> bool:
-    """Detect standalone verse/couplet lines so batching avoids cleaving a poem mid-stanza."""
-    stripped = text.strip()
-    if not stripped:
-        return False
-    # Allow a single trailing closing quote on the final couplet of a recited ballad.
-    core = stripped.rstrip('」』”"')
-    if any(ch in _VERSE_DIALOGUE_MARKS for ch in core):
-        return False
-    lines = [line.strip() for line in core.splitlines() if line.strip()]
-    if len(lines) >= 2:
-        # Short multi-line blocks (<=48 chars total, <=28 chars/line) always qualify; longer
-        # stanzas need >=4 short lines (<=18 chars/line, <=240 chars total) so hard-wrapped
-        # narrative paragraphs (e.g. 3 lines of 17-21 chars) are not misclassified as verse.
-        if len(stripped) <= 48:
-            return all(len(line) <= 28 for line in lines)
-        return len(stripped) <= 240 and len(lines) >= 4 and all(len(line) <= 18 for line in lines)
-    if len(stripped) > 48:
-        return False
-    match = _CJK_COUPLET_RE.match(core)
-    if match is not None:
-        # A comma-split balanced sentence is everyday modern prose ("他耐得住寂寞，甚至享受寂寞。",
-        # four-character parallel pairs in web fiction). Only treat it as a couplet when both
-        # hemistichs scan as 5- or 7-character shi lines, it does not end in an exclamation or
-        # question, and it carries no vernacular particles.
-        left, right = match.group(1), match.group(2)
-        if (
-            len(left) == len(right)
-            and len(left) in _COUPLET_HEMISTICH_LENGTHS
-            and not any(ch in _VERNACULAR_PARTICLES for ch in left + right)
-        ):
-            return True
-    return False
-
-
-_is_verse_segment = is_verse_segment
-
-
-def verse_block_indices(sources: Sequence[str]) -> set[int]:
-    """Return indices that should preserve verse line breaks.
-
-    Includes any multi-line verse segment (already containing a newline in source) and any
-    contiguous run of two or more adjacent ``is_verse_segment`` lines. Isolated single-line
-    couplets surrounded by prose are excluded so prose sentences are never forcibly split.
-    """
-    flags = [is_verse_segment(src) for src in sources]
-    selected: set[int] = set()
-    i = 0
-    n = len(sources)
-    while i < n:
-        if not flags[i]:
-            i += 1
-            continue
-        end = i
-        while end < n and flags[end]:
-            end += 1
-        if end - i >= 2:
-            selected.update(range(i, end))
-        elif "\n" in sources[i].strip():
-            selected.add(i)
-        i = end
-    return selected
-
-
 def batch_segments(segments: list[Segment], max_tokens: int) -> list[list[Segment]]:
-    """Group segments into batches by shared token budget (tiktoken cl100k_base).
-
-    Avoid splitting contiguous multi-segment verse blocks (e.g., classical couplets) across
-    batch boundaries: if a poem is about to begin late in a prose batch and fits cleanly in a
-    fresh batch, start the batch before the poem; if already inside a poem, allow bounded
-    overflow (+35% of ``max_tokens``) to finish the remaining verse run together.
-    """
-    if not segments:
-        return []
-    lengths = [count_tokens(s.source) for s in segments]
-    is_verse = [_is_verse_segment(s.source) for s in segments]
-    overflow_limit = max(max_tokens, int(max_tokens * 1.35))
-    early_flush_threshold = int(max_tokens * 0.65)
-
-    def _verse_run_end(start: int) -> int:
-        end = start
-        while end < len(segments) and is_verse[end]:
-            end += 1
-        return end
-
+    """Group segments into batches by shared token budget (tiktoken cl100k_base)."""
     batches: list[list[Segment]] = []
     cur: list[Segment] = []
     cur_tokens = 0
-    in_verse_run = False
-    i = 0
-    while i < len(segments):
-        s = segments[i]
-        slen = lengths[i]
-        if is_verse[i] and not in_verse_run:
-            run_end = _verse_run_end(i)
-            run_len = run_end - i
-            if run_len >= 2:
-                run_tokens = sum(lengths[i:run_end])
-                # Start a fresh batch before a multi-segment poem if it won't fit here
-                # but does fit cleanly in its own batch.
-                if (
-                    cur
-                    and cur_tokens >= early_flush_threshold
-                    and cur_tokens + run_tokens > max_tokens
-                    and run_tokens <= max_tokens
-                ):
-                    batches.append(cur)
-                    cur, cur_tokens = [], 0
-                in_verse_run = True
-        elif not is_verse[i]:
-            in_verse_run = False
-
+    for s in segments:
+        slen = count_tokens(s.source)
         if cur and cur_tokens + slen > max_tokens:
-            # If we are inside a multi-segment verse run and finishing the run fits within
-            # the bounded overflow slack, keep the poem unbroken in this batch.
-            if in_verse_run:
-                run_end = _verse_run_end(i)
-                rem_tokens = sum(lengths[i:run_end])
-                if cur_tokens + rem_tokens <= overflow_limit:
-                    cur.append(s)
-                    cur_tokens += slen
-                    i += 1
-                    continue
             batches.append(cur)
             cur, cur_tokens = [], 0
         cur.append(s)
         cur_tokens += slen
-        i += 1
     if cur:
         batches.append(cur)
     return batches

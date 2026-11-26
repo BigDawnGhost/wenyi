@@ -1,26 +1,45 @@
-"""Explicit batch inputs and translate/polish results without formal state mutation."""
+"""Batch planning and execution for body translation without state I/O."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import re
+from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 
 from ...agents.base import Messages
-from ...agents.batch_risk import has_embedded_verse
 from ...agents.polisher import Polisher
 from ...agents.sparse_editor import SparseSemanticEditor
 from ...agents.translator import Translator
-from ...ingest.segmenter import batch_segments, verse_block_indices
+from ...ingest.segmenter import batch_segments
 from ...llm.retrying import is_resumable_provider_interrupt
 from ...markup.ruby import strip_ruby_markers
 from ...models.document import Segment
 from ...models.glossary import GlossaryTerm
 
+POLISH_PENDING = "polish_pending"
+POLISH_FAILED = "polish_failed"
+POLISH_ATTEMPTS = "polish_attempts"
+MAX_POLISH_ATTEMPTS = 2
+
+
+def mark_polish_failure(segment: Segment, *, interrupted: bool = False) -> None:
+    """Record a polish failure; cap deterministic retries while always retrying outages."""
+    if interrupted:
+        segment.meta[POLISH_FAILED] = True
+        return
+    attempts = int(segment.meta.get(POLISH_ATTEMPTS, 0)) + 1
+    if attempts < MAX_POLISH_ATTEMPTS:
+        segment.meta[POLISH_ATTEMPTS] = attempts
+        segment.meta[POLISH_FAILED] = True
+    else:
+        segment.meta.pop(POLISH_FAILED, None)
+        segment.meta.pop(POLISH_ATTEMPTS, None)
+
 
 @dataclass(frozen=True)
 class BatchPlan:
-    """Capture the source positions and context used for exactly one serial batch."""
+    """Immutable inputs captured on the chapter thread before calling models."""
 
     chapter: int
     start_index: int
@@ -34,7 +53,6 @@ class BatchPlan:
     annotation_contexts: list[list[dict[str, str]]]
     next_source: str
     allow_empty_translations: bool = False
-    variants_by_source: Mapping[str, Sequence[str]] | None = None
 
     @classmethod
     def capture(
@@ -51,14 +69,13 @@ class BatchPlan:
         next_source: str,
         *,
         allow_empty_translations: bool = False,
-        variants_by_source: Mapping[str, Sequence[str]] | None = None,
     ) -> BatchPlan:
         """Detach mutable term and annotation metadata from subsequent chapter updates."""
         return cls(
             chapter,
             start_index,
-            tuple(s.index for s in segments),
-            tuple(s.source for s in segments),
+            tuple(segment.index for segment in segments),
+            tuple(segment.source for segment in segments),
             tuple(deepcopy(terms)),
             context,
             style,
@@ -67,12 +84,13 @@ class BatchPlan:
             deepcopy(annotation_contexts),
             next_source,
             allow_empty_translations,
-            dict(variants_by_source) if variants_by_source else None,
         )
 
 
 @dataclass(frozen=True)
 class BatchResult:
+    """Aligned model outputs returned to the chapter service for persistence."""
+
     targets: tuple[str, ...]
     before_polish: tuple[str | None, ...]
     precision_key: str | None = None
@@ -117,7 +135,6 @@ class PolishJob:
     style: str
     next_source: str
     draft: BatchDraft
-    variants_by_source: Mapping[str, Sequence[str]] | None = None
 
     @classmethod
     def from_plan(cls, plan: BatchPlan, draft: BatchDraft) -> PolishJob:
@@ -130,7 +147,6 @@ class PolishJob:
             plan.style,
             plan.next_source,
             draft,
-            plan.variants_by_source,
         )
 
 
@@ -162,26 +178,14 @@ class TranslationBatchExecutor:
         if polish:
             before_polish = tuple(targets)
             try:
-                if polish_mode == "sparse" and self._sparse_editor is not None:
-                    sparse = self._sparse_editor.edit_batch(
-                        plan.sources,
-                        targets,
-                        glossary_terms=list(plan.terms),
-                        style=plan.style,
-                        next_source=plan.next_source,
-                        variants_by_source=plan.variants_by_source,
-                    )
-                    polished = None if sparse.failed else list(sparse.targets)
-                else:
-                    polished = self._continue_polish(draft, plan.next_source)
-                    if polished is None:
-                        polished = self._polisher.polish_or_none(
-                            targets,
-                            glossary_terms=list(plan.terms),
-                            style=plan.style,
-                            next_source=plan.next_source,
-                            sources=list(plan.sources),
-                        )
+                polished = self._run_polish(
+                    draft,
+                    sources=plan.sources,
+                    terms=plan.terms,
+                    style=plan.style,
+                    next_source=plan.next_source,
+                    polish_mode=polish_mode,
+                )
             except BaseException as exc:  # noqa: BLE001 - budget/cancel stops must still save the draft.
                 if isinstance(exc, Exception) and not is_resumable_provider_interrupt(exc):
                     raise
@@ -202,25 +206,11 @@ class TranslationBatchExecutor:
 
     def translate(self, plan: BatchPlan) -> BatchDraft:
         """Translate one batch thread-safely and return its per-call transcript."""
-        context_for_model = plan.context
-        has_couplets = bool(verse_block_indices(plan.sources))
-        has_embedded = any(
-            has_embedded_verse(src, source_lang=self._translator.src) for src in plan.sources
-        )
-        if has_couplets or has_embedded:
-            verse_note = (
-                "[Verse formatting note: this batch contains verse couplets or embedded poems/lyrics. "
-                "Render each verse line/couplet with explicit \\n line breaks, never inline prose or ' / '.]"
-            )
-            context_for_model = (
-                f"{context_for_model}\n\n{verse_note}".strip() if context_for_model else verse_note
-            )
-
         targets, turn, indices = self._translator.translate_batch_with_transcript(
             list(plan.sources),
             glossary_terms=list(plan.terms),
             style=plan.style,
-            context=context_for_model,
+            context=plan.context,
             book_synopsis=plan.book_synopsis,
             chapter_digest=plan.chapter_digest,
             annotation_contexts=plan.annotation_contexts,
@@ -236,30 +226,70 @@ class TranslationBatchExecutor:
 
     def polish(self, job: PolishJob, *, polish_mode: str = "full") -> tuple[str, ...] | None:
         """Polish a saved draft without touching state; ``None`` keeps the draft."""
-        if polish_mode == "sparse" and self._sparse_editor is not None:
-            sparse = self._sparse_editor.edit_batch(
-                job.sources,
-                job.draft.targets,
-                glossary_terms=list(job.terms),
-                style=job.style,
-                next_source=job.next_source,
-                variants_by_source=job.variants_by_source,
-            )
-            if sparse.failed or len(sparse.targets) != len(job.draft.targets):
-                return None
-            return sparse.targets
-        polished = self._continue_polish(job.draft, job.next_source)
-        if polished is None:
-            polished = self._polisher.polish_or_none(
-                list(job.draft.targets),
-                glossary_terms=list(job.terms),
-                style=job.style,
-                next_source=job.next_source,
-                sources=list(job.sources),
-            )
+        polished = self._run_polish(
+            job.draft,
+            sources=job.sources,
+            terms=job.terms,
+            style=job.style,
+            next_source=job.next_source,
+            polish_mode=polish_mode,
+        )
         if polished is None or len(polished) != len(job.draft.targets):
             return None
         return tuple(polished)
+
+    def _run_polish(
+        self,
+        draft: BatchDraft,
+        *,
+        sources: Sequence[str],
+        terms: Sequence[GlossaryTerm],
+        style: str,
+        next_source: str,
+        polish_mode: str,
+    ) -> list[str] | None:
+        if polish_mode == "sparse" and self._sparse_editor is not None:
+            continued = self._continue_sparse_polish(draft, next_source)
+            if continued is not None:
+                return continued
+            sparse = self._sparse_editor.edit_batch(
+                sources,
+                draft.targets,
+                glossary_terms=terms,
+                style=style,
+                next_source=next_source,
+            )
+            if sparse.failed or len(sparse.targets) != len(draft.targets):
+                return None
+            return [strip_ruby_markers(item) for item in sparse.targets]
+        polished = self._continue_polish(draft, next_source)
+        if polished is None:
+            polished = self._polisher.polish_or_none(
+                list(draft.targets),
+                glossary_terms=list(terms),
+                style=style,
+                next_source=next_source,
+                sources=list(sources),
+            )
+        return polished
+
+    def _continue_sparse_polish(self, draft: BatchDraft, next_source: str) -> list[str] | None:
+        """Continue the translation conversation with a KV-cached sparse audit turn."""
+        if self._sparse_editor is None or draft.turn is None or draft.turn_indices is None:
+            return None
+        indices = draft.turn_indices
+        sub_drafts = [draft.targets[index] for index in indices]
+        result = self._sparse_editor.edit_continue(
+            draft.turn,
+            sub_drafts,
+            next_source=next_source,
+        )
+        if result is None or len(result.targets) != len(indices):
+            return None
+        polished = list(draft.targets)
+        for index, text in zip(indices, result.targets):
+            polished[index] = strip_ruby_markers(text)
+        return polished
 
     def _continue_polish(self, draft: BatchDraft, next_source: str) -> list[str] | None:
         """Continue the translation conversation and restore filtered source positions."""
@@ -299,3 +329,19 @@ def resume_batches(segments: list[Segment], max_tokens: int) -> list[list[Segmen
         if current:
             batches.append(current)
     return batches
+
+
+def glossary_checkpoint_covers(checkpoints: set[str], start: int, count: int) -> bool:
+    """Reuse completed extraction when BabelDOC role boundaries split an older batch."""
+    ranges = sorted(
+        (int(m.group(1)), int(m.group(1)) + int(m.group(2)))
+        for key in checkpoints
+        if (m := re.fullmatch(r"(\d+):([1-9]\d*)", key)) is not None
+    )
+    cursor = start
+    for saved_start, saved_end in ranges:
+        if saved_start <= cursor < saved_end:
+            cursor = saved_end
+            if cursor >= start + count:
+                return True
+    return False

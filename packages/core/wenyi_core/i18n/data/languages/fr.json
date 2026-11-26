@@ -1,11 +1,6 @@
 {
   "label": "French",
   "english_name": "French",
-  "inline_gloss_markers": [
-    "litt.",
-    "littéralement",
-    "N.d.T."
-  ],
   "source_guidance": "Interpret French tense, grammatical gender, tu/vous and interpersonal relationships. Grammatical gender alone does not establish a ${genre_person_label}’s gender.",
   "target_guidance": "Use natural French with consistent tense, gender/number agreement and tu/vous register. Handle elision and accents correctly.",
   "punctuation_rule": "Follow French punctuation and quotation spacing conventions. Preserve accents, apostrophes, symbol structure and pairing.",

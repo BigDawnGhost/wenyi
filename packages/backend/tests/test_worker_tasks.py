@@ -77,6 +77,59 @@ def test_previously_queued_jobs_drop_retired_entity_markers(value):
     assert snapshot["pipeline"]["entity_markers"] is value
 
 
+def test_previously_queued_jobs_drop_retired_v1_fork_keys():
+    context = current_context()
+    repository = cast(Mock, context.repository)
+    snapshot = {
+        "pipeline": {
+            "glossary_mode": "compiled",
+            "batch_glossary": "relevant",
+            "consistency_sweep": True,
+            "deterministic_hygiene": True,
+            "chapter_concurrency": 4,
+            "polish_mode": "sparse",
+        },
+        "output": {
+            "quote_style": "curly",
+            "bilingual_order": "source_first",
+        },
+    }
+    repository.get_project.return_value = {"id": "p"}
+    repository.get_job_by_arq_id.return_value = {"params": {"config_snapshot": snapshot}}
+
+    config = bindings.build_config_for(context, "p", "queued")
+
+    assert config.pipeline.chapter_concurrency == 4
+    assert config.pipeline.polish_mode == "sparse"
+    assert config.output.bilingual_order == "source_first"
+    # Caller's snapshot dict must not be mutated in place.
+    assert snapshot["pipeline"]["glossary_mode"] == "compiled"
+    assert snapshot["output"]["quote_style"] == "curly"
+
+
+@pytest.mark.parametrize(
+    ("marker", "expected_run_id", "expected"),
+    [
+        (b"run-123", "run-123", True),
+        (bytearray(b"run-123"), "run-123", True),
+        (b"run-other", "run-123", False),
+        ("run-123", "run-123", True),
+        ("run-other", "run-123", False),
+        (None, "run-123", True),
+    ],
+)
+def test_auto_resume_still_pending_handles_bytes_and_str_redis_markers(
+    marker, expected_run_id, expected
+):
+    released = []
+    cache = SimpleNamespace(get=lambda key: marker)
+    telemetry = SimpleNamespace(connect=lambda: cache, release=lambda c: released.append(c))
+    context = replace(current_context(), telemetry=telemetry)
+
+    assert tasks._auto_resume_still_pending(context, "p", expected_run_id) is expected
+    assert released == [cache]
+
+
 @pytest.mark.parametrize("order", ["target_first", "source_first"])
 @pytest.mark.parametrize("preserve_source_style", [False, True])
 @pytest.mark.parametrize("source_changes", [False, True])

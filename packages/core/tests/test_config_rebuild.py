@@ -289,22 +289,3 @@ def test_valid_cli_file_is_not_rewritten(tmp_path):
     assert not load_rebuilt_config(path).pipeline.review
     assert path.read_text(encoding="utf-8") == original
     assert list(tmp_path.iterdir()) == [path]
-
-
-def test_cli_saved_entity_markers_setting_is_discarded_not_fatal(tmp_path):
-    # pipeline.entity_markers was removed; an old saved file must still load.
-    path = tmp_path / "config.yaml"
-    path.write_text(
-        "llm: {preset: fake}\npipeline: {entity_markers: true, review: false}\n",
-        encoding="utf-8",
-    )
-    config = load_rebuilt_config(path)
-    assert config.pipeline.review is False
-    assert "entity_markers" not in config.pipeline.model_dump()
-    assert yaml.safe_load(path.read_text()) == {
-        "llm": {"preset": "fake"},
-        "pipeline": {"review": False},
-    }
-    assert len(list(tmp_path.glob("config.yaml.backup-*.yaml"))) == 1
-    with pytest.raises(ValidationError):
-        Config.from_dict({"pipeline": {"entity_markers": True}})

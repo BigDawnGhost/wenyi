@@ -97,7 +97,6 @@ class Agent:
         *,
         operation: str,
         max_tokens: int | None = None,
-        thinking_boost: int = 0,
         require_complete_payload: bool = False,
     ) -> tuple[Any, str]:
         """Run ``complete`` on ``messages`` and return ``(parsed_json, raw_assistant_text)``.
@@ -105,21 +104,12 @@ class Agent:
         With ``require_complete_payload``, a reply that parses only after structural repair raises
         ``UnsafeJsonRepairError``: the repair may have folded stray text into payload values.
         """
-        if thinking_boost > 0:
-            text = self.client.complete(
-                messages,
-                operation=operation,
-                json_mode=True,
-                max_tokens=max_tokens,
-                thinking_boost=thinking_boost,
-            )
-        else:
-            text = self.client.complete(
-                messages,
-                operation=operation,
-                json_mode=True,
-                max_tokens=max_tokens,
-            )
+        text = self.client.complete(
+            messages,
+            operation=operation,
+            json_mode=True,
+            max_tokens=max_tokens,
+        )
         parsed = parse_json_result(text)
         if require_complete_payload and not parsed.safe_for_complete_payload:
             raise UnsafeJsonRepairError(f"JSON needed structural repair: {text[:200]!r}")

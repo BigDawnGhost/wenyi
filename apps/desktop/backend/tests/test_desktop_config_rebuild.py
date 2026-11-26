@@ -292,3 +292,91 @@ def test_removed_workflow_settings_are_backed_up_and_reset(tmp_path, strategy):
     LocalBackend(backend.workspace)
     with backend.transaction(write=False) as connection:
         assert connection.execute("SELECT count(*) FROM configuration_backups").fetchone()[0] == 2
+
+
+def test_retired_v1_fork_keys_are_backed_up_and_stripped_while_preserving_valid_fields(tmp_path):
+    """Existing Desktop workspaces upgrading from the v1 fork drop retired keys cleanly."""
+    from wenyi_backend.project_service import effective_config
+    from wenyi_core.config import Config
+    from wenyi_core.models.glossary import STATUS_CONTEXT_DEPENDENT, TYPE_NAVIGATION, GlossaryTerm
+    from wenyi_core.storage.sqlite import SqliteStorage
+
+    backend = LocalBackend(tmp_path / "workspace")
+    legacy_settings = {
+        "config": {
+            "llm": {"preset": "fake"},
+            "pipeline": {
+                "glossary_mode": "compiled",
+                "batch_glossary": "relevant",
+                "consistency_sweep": True,
+                "deterministic_hygiene": True,
+                "chapter_concurrency": 4,
+                "polish_mode": "sparse",
+                "skip_boilerplate": True,
+            },
+            "output": {"quote_style": "typographic", "mono": True},
+        },
+        "template": "标准翻译",
+        "revision": 2,
+    }
+    legacy_project = {
+        "id": "v1-fork-novel",
+        "source_lang": "zh",
+        "target_lang": "en",
+        "strategy": {},
+        "config": {
+            "pipeline": {
+                "glossary_mode": "compiled",
+                "consistency_sweep": True,
+                "chapter_concurrency": 6,
+                "polish_mode": "sparse",
+                "glossary_prompt_tokens": 4000,
+            },
+            "output": {"quote_style": "straight"},
+        },
+    }
+    with backend.transaction() as connection:
+        backend.save_settings(legacy_settings, connection)
+        connection.execute(
+            "INSERT INTO projects VALUES(?,?)",
+            (legacy_project["id"], json.dumps(legacy_project)),
+        )
+
+    # Opening the catalog reconstructs both global settings and project config safely.
+    LocalBackend(backend.workspace)
+    rebuilt_settings = backend.load_settings()
+    assert rebuilt_settings["config"]["pipeline"]["chapter_concurrency"] == 4
+    assert rebuilt_settings["config"]["pipeline"]["polish_mode"] == "sparse"
+    assert rebuilt_settings["config"]["pipeline"]["skip_boilerplate"] is True
+    for retired in (
+        "glossary_mode",
+        "batch_glossary",
+        "consistency_sweep",
+        "deterministic_hygiene",
+    ):
+        assert retired not in rebuilt_settings["config"]["pipeline"]
+    assert "quote_style" not in rebuilt_settings["config"]["output"]
+
+    with backend.transaction(write=False) as connection:
+        restored = json.loads(connection.execute("SELECT document FROM projects").fetchone()[0])
+        backups = connection.execute("SELECT count(*) FROM configuration_backups").fetchone()[0]
+    assert backups == 2
+    effective = effective_config(
+        restored, defaults=Config.from_dict({"llm": {"preset": "fake"}}), state_dir="unused"
+    )
+    assert effective.pipeline.chapter_concurrency == 6
+    assert effective.pipeline.polish_mode == "sparse"
+    assert effective.pipeline.glossary_prompt_tokens == 4000
+
+    # Existing fork SQLite glossary with context_dependent + navigation terms stays readable.
+    store = SqliteStorage(tmp_path / "project_state")
+    store.upsert_term(
+        GlossaryTerm(
+            source="大人", target="My Lord | Your Excellency", status=STATUS_CONTEXT_DEPENDENT
+        )
+    )
+    store.upsert_term(GlossaryTerm(source="第一章", target="Chapter 1", type=TYPE_NAVIGATION))
+    loaded = {t.source: t for t in store.all_terms()}
+    assert loaded["大人"].status == STATUS_CONTEXT_DEPENDENT
+    assert loaded["第一章"].type == TYPE_NAVIGATION
+    store.close()

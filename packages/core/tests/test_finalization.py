@@ -23,7 +23,6 @@ def _service(mono: bool = True, bilingual: bool = True) -> AssemblyService:
                 bilingual_order="target_first",
                 bilingual_preserve_source_style=False,
                 about_page=True,
-                quote_style="preserve",
             ),
             pipeline=SimpleNamespace(babeldoc_timeout=30),
         )

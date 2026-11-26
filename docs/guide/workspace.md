@@ -33,7 +33,7 @@ Use **Settings → Advanced → Advanced YAML configuration** to change [connect
 
 Ordinary settings save automatically and preserve existing advanced values. Wait for the save confirmation before starting a task or exporting. If saving fails, retry the change or discard it. YAML edits are not saved as you type: choose **Apply YAML** to check and save the document, or **Discard changes** to return to the last saved settings. Ordinary configuration controls are unavailable while there is a YAML draft.
 
-Built-in workflow defaults enable whole-book understanding, polishing, Review, and Review Autofix. In **Settings → Workflow** or **Project settings → Workflow**, you can also configure **Glossary mode** (`Incremental` or `Compiled Book Bible`), **Polishing mode** (`Full rewrite` or `Sparse semantic edit`), **Chapter concurrency** (available with `Compiled Book Bible`), **Book-wide consistency sweep**, and **Deterministic formatting hygiene**. Existing project overrides still apply. In particular, Review is **not read-only by default**; see [Whole-book Review](#whole-book-review) before starting a run.
+Built-in workflow defaults enable whole-book understanding, polishing, Review, and Review Autofix. Existing project overrides still apply. In particular, Review is **not read-only by default**; see [Whole-book Review](#whole-book-review) before starting a run.
 
 New and resumed tasks use saved settings; active tasks keep their captured configuration. Pause a project before changing its configuration. In global Settings, switching categories preserves drafts, but leaving Settings or reloading discards unsaved changes. Configuration reference: [Models and pipeline options](../reference/configuration.md).
 
@@ -44,8 +44,6 @@ Start translation from the project overview. **Current workflow** shows the actu
 Use **Pause** for the current queued/running task and wait until it is paused before editing. **Pausing is a safe-boundary stop, not an instant undo or a guarantee that an in-flight provider request is unbilled.** Wenyi stops work at supported cancellation/checkpoint boundaries and retains committed progress. If the task has already completed or a newer run has replaced it, refresh instead of repeatedly pausing the old run.
 
 Use **Resume** to continue the actual interrupted task type, including preparation or Review, rather than starting the book over. Completed checkpoints are reused; work not committed before interruption may need to run again. A failed task shows its reason in the project's overview: correct the problem, then resume. Failed exports are retried by creating a new export.
-
-When the model provider has a temporary outage (timeouts, dropped connections, HTTP 408/409/429 or 5xx), the task pauses instead of failing and resumes by itself after 1, 2, 4 and then 8 minutes. **Current workflow** in the project overview shows the next retry time and a **Resume now** action. If the provider answers any request between outages, the retry sequence starts again from 1 minute. If about 15 minutes of retries get no answer, the task stops with an error so you can check the provider. Errors that waiting cannot fix, such as an invalid key, a missing model or an exhausted balance (HTTP 400, 401, 402, 403 or 404), stop the task straight away.
 
 While work is queued, running, or stopping, project configuration, paragraphs, titles, glossary, and analysis are read-only. Reading and copying remain available. Conflicting starts or edits are rejected; saved-snapshot exports can run alongside translation. If another client changed an idle project, reopen or refresh it to load the latest state without treating an old page as authoritative.
 
@@ -65,7 +63,7 @@ Pause active work, open a paragraph, edit it, and **save**. Automatic refresh do
 
 ## Manage the glossary
 
-Use **Glossary** to add or edit source terms, translations, aliases, notes, types, and gender. Manage character names through the **Person** filter rather than a separate character list. Japanese-source projects also expose readings; translating *into* Japanese does not by itself enable that field. Under **Settings → Workflow** (global defaults) or **Project settings → Workflow**, choose **Batch glossary** (`Full glossary` or `Relevant to each batch`) to control whether each translation and polish batch sends the whole glossary or only matching entries; long books benefit from `Relevant to each batch` while whole-book Review still receives the full glossary.
+Use **Glossary** to add or edit source terms, translations, aliases, notes, types, and gender. Manage character names through the **Person** filter rather than a separate character list. Japanese-source projects also expose readings; translating *into* Japanese does not by itself enable that field.
 
 Search covers the whole glossary, including aliases, readings, and notes. Type filters apply to the results. Selecting all affects only the current page; changing pages or filters clears the selection. During a queued/running task, **Term details** remains available for reading and copying, but adding, importing, editing, deleting, and resolving conflicts are disabled.
 

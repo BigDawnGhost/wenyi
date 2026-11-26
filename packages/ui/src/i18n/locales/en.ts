@@ -145,13 +145,7 @@ const en = {
   "events.exportedFiles": "Exported files: {files}",
   "events.projectInitializedChapters":
     "Project initialized — chapters: {count}",
-  "events.glossaryBibleCompiled":
-    "Book Bible compiled ({seeded} terms, {quotes} quotes)",
-  "events.glossaryBibleReused": "Book Bible reused ({seeded} terms)",
-  "events.glossaryBibleCheckpointReused":
-    "Resumed Book Bible compilation from its checkpoint ({seeded} terms)",
-  "events.consistencySweepCompleted":
-    "Consistency sweep completed ({glossary} glossary, {drift} drift fixes)",
+  "events.cjkGlossarySeeded": "CJK glossary seeded ({seeded} terms)",
   "events.noEventsYet": "No events yet.",
   "export.exportTaskSubmitted": "Export task submitted",
   "export.saveAs": "Save as",
@@ -343,7 +337,7 @@ const en = {
   "common.queued": "Queued",
   "workflowPanel.currentWorkflow": "Current workflow",
   "workflowPanel.waitingForProgressUpdates": "Waiting for progress updates",
-  "workflowPanel.autoResumeScheduled": "Automatic retry scheduled at {time}",
+  "workflowPanel.autoResumeScheduled": "Auto-resume scheduled at {time}",
   "createProject.precisionMode": "Three drafts + synthesis",
   "createProject.glossaryNotes": "Incremental glossary notes",
   "createProject.glossaryNotesHint": "Update glossary notes with source references after each batch. This uses additional model tokens.",
@@ -536,30 +530,23 @@ const en = {
   "settings.operationModel": "Model: {operation}",
   "settings.bookUnderstanding": "Book understanding",
   "settings.polishing": "Polishing",
-  "settings.consistencySweep": "Book-wide consistency sweep",
-  "settings.consistencySweepHelp":
-    "After all chapters finish, patch missed glossary terms and reconcile cross-chapter title or epithet drift.",
-  "settings.deterministicHygiene": "Deterministic formatting hygiene",
-  "settings.deterministicHygieneHelp":
-    "Repair leaked \\n escapes after each chapter. Punctuation, line layout and names are left as translated.",
-  "settings.glossaryMode": "Glossary mode",
-  "settings.glossaryModeHelp":
-    "Incremental extracts terms batch by batch. Compiled pre-compiles a book-wide glossary, conventions, and repeated quotes before translation so chapters can run in parallel.",
-  "settings.glossaryModeIncremental": "Incremental (batch by batch)",
-  "settings.glossaryModeCompiled": "Compiled Book Bible",
-  "settings.polishMode": "Polishing mode",
+  "settings.polishMode": "Polish mode",
   "settings.polishModeHelp":
-    "Full rewrites every batch. Sparse audits each batch and only rewrites spans with detected meaning, term, voice, or formatting defects.",
+    "Full rewrites every batch; Sparse audits against the source and patches only defective paragraphs.",
   "settings.polishModeFull": "Full rewrite",
-  "settings.polishModeSparse": "Sparse semantic edit",
+  "settings.polishModeSparse": "Sparse edit",
   "settings.chapterConcurrency": "Chapter concurrency",
   "settings.chapterConcurrencyHelp":
-    "Number of chapters translated in parallel. Available when Glossary mode is Compiled Book Bible.",
-  "settings.batchGlossary": "Batch glossary",
-  "settings.batchGlossaryHelp":
-    "Full sends every glossary term to each translation and polish batch. Relevant sends only entries matching the batch's source, following-source reference, annotations, and chapter digest (recommended for long books); whole-book review still receives the full glossary.",
-  "settings.batchGlossaryAll": "Full glossary",
-  "settings.batchGlossaryRelevant": "Relevant to each batch",
+    "Concurrent chapters (1 = serial; >1 seeds a CJK glossary upfront for parallel drafting).",
+  "settings.polishConcurrency": "Polish concurrency",
+  "settings.polishConcurrencyHelp":
+    "Background polish workers in serial mode (1 = inline).",
+  "settings.glossaryPromptTokens": "Glossary prefix budget (tokens)",
+  "settings.glossaryPromptTokensHelp":
+    "Max tokens kept in the cached system glossary prefix (0 = unlimited; overflow matches per batch).",
+  "settings.skipBoilerplate": "Skip scraped boilerplate",
+  "settings.skipBoilerplateHelp":
+    "Ignore scraped web-novel site watermarks and promo lines on ingest.",
   "settings.applyAutofixesToTheSavedTranslation":
     "Apply autofixes to the saved translation after review",
   "settings.paragraphAnnotationAlignment": "Paragraph annotation alignment",
@@ -644,8 +631,7 @@ const en = {
   "progress.stage.prescan": "Prescanning chapters…",
   "progress.stage.style": "Analysing the book's style…",
   "progress.stage.synopsis": "Generating the whole-book synopsis…",
-  "progress.stage.compilingBible": "Compiling Book Bible…",
-  "progress.stage.consistencySweep": "Running cross-chapter consistency sweep…",
+  "progress.stage.seedingGlossary": "Seeding CJK glossary…",
   "progress.stage.chapter": "Chapter {count}",
   "progress.stage.translationDone": "Translation complete",
   "progress.stage.assembling": "Assembling the translation…",
@@ -656,7 +642,7 @@ const en = {
   "progress.stage.arbitration": "Resolving conflicts, round {round}",
   "progress.stage.shadowRevision": "Shadow revision, round {round}",
   "progress.stage.publishingAutofix": "Publishing the review autofixes",
-  "progress.stage.outagePaused": "Paused after provider outage",
+  "progress.stage.outagePaused": "Provider temporarily unavailable — paused",
   "workflow.languageDetection": "Language detection",
   "workflow.styleAnalysis": "Style analysis",
   "workflow.translate": "Translate chapters in batches",

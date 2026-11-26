@@ -153,12 +153,7 @@ BabelDOC 配置、PDF 导出条件及其他格式要求见[格式参考](../refe
 | 选项 | 作用 |
 |---|---|
 | `--chapter N` | 翻译并保存一个从零开始编号的章节，跳过全书 Review 和导出。 |
-| `--pipeline-preset classic\|nextgen` | 应用翻译流程预设。`nextgen` 开启全书预编译词典、稀疏精修、4 路章节并行、确定性格式整理与全书一致性巡检（默认跳过独立全书 Review，除非同时传入 `--review`）。 |
-| `--glossary-mode incremental\|compiled` | 覆盖 `pipeline.glossary_mode`（`incremental` 逐批抽取或 `compiled` 全书预编译词典）。 |
 | `--polish` / `--no-polish` | 覆盖待译任务的 `pipeline.polish`。 |
-| `--polish-mode full\|sparse` | 覆盖 `pipeline.polish_mode`（`full` 全量润色或 `sparse` 稀疏精修）。 |
-| `--chapter-concurrency N` | 并行翻译的章节数（需搭配 `compiled` 术语模式）。 |
-| `--consistency-sweep` / `--no-consistency-sweep` | 覆盖译后全书一致性巡检开关。 |
 | `--translation-mode standard\|three_draft_synthesis` | 覆盖翻译方式；精翻要求开启润色。 |
 | `--review` / `--no-review` | 覆盖自动最终全书 Review。 |
 | `--format epub\|txt\|html\|markdown\|pdf\|docx` | 选择导出格式；PDF 仅适用于已保存的 BabelDOC 项目。 |
@@ -266,7 +261,7 @@ Ctrl+C 会协作式停止排队请求与重试等待；正在执行的请求可�
 强杀可能丢失最后未保存的工作或用量，优先正常中断。
 
 `status` 显示章节进度、术语统计与计时。`inspect-run` 不调用模型，
-只汇总已记录的失败、重试、耗时及所选目标累计用量；`pipeline.polish_concurrency` 大于 1 时还显示后台润色积压。加 `--verbose` 可显示最后记录的
+只汇总已记录的失败、重试、耗时及所选目标累计用量。加 `--verbose` 可显示最后记录的
 traceback；分享前检查其中的私有文本和路径。这两个查看命令不增加执行时长。
 
 Token 总量跨续跑累计，不仅属于上次调用。缓存读取率为已报告读取占全部输入的比例；

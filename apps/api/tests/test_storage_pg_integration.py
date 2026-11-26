@@ -108,34 +108,18 @@ def test_atomic_chapter_and_export_snapshot(storage, tmp_path):
 
 def test_glossary_order_conflict_and_batch_checkpoint(storage, tmp_path):
     initialize(storage, tmp_path)
-    storage.upsert_term(GlossaryTerm(source="Zed", target="泽德"), chapter=2)
+    storage.upsert_term(GlossaryTerm(source="Zed", target="泽德"))
     storage.upsert_term(GlossaryTerm(source="Amy", target="艾米"))
-    assert storage.get_term("Zed").first_chapter == 2
     assert [term.source for term in storage.all_terms()] == ["Zed", "Amy"]
     assert storage.upsert_term(GlossaryTerm(source="Zed", target="另一译名")) == "conflict"
     assert storage.get_term("Zed").target == "泽德"
     assert storage.resolve_term("Zed", "确认译名")
-    # A resolution is the user's decision, so the entry no longer counts as extracted.
-    assert storage.get_term("Zed").first_chapter is None
     storage.mark_conflicts_resolved("Zed")
     assert storage.open_conflicts() == []
     assert [term.source for term in storage.all_terms()] == ["Zed", "Amy"]
     storage.log_event("batch_glossary_extracted", chapter=0, start_index=2, count=4)
     storage.log_event("batch_glossary_extracted", chapter=1, start_index=0, count=2)
     assert storage.completed_batch_glossary_keys(0) == {"2:4"}
-
-
-def test_web_glossary_edit_makes_the_entry_the_users(pg_storage, pg_pool):
-    from wenyi_api.adapters import PostgresRepository
-
-    pg_storage.upsert_term(GlossaryTerm(source="Zed", target="泽德"), chapter=2)
-    repository = PostgresRepository.__new__(PostgresRepository)
-    repository._pool = pg_pool
-    repository.update_term(
-        pg_storage.project_id, pg_storage, "Zed", GlossaryTerm(source="Zed", target="齐德")
-    )
-    term = must(pg_storage.get_term("Zed"))
-    assert (term.target, term.first_chapter) == ("齐德", None)
 
 
 def test_glossary_display_pages_do_not_reorder_prompt_terms(storage):
@@ -590,47 +574,6 @@ def test_postgres_initialization_preserves_only_matching_preview(pg_storage, pg_
     assert pg_storage.read_artifact("preview.json") == {"title": "Book"}
     assert set(pg_storage.list_artifacts()) == {"parsed_document.json", "preview.json"}
     assert pg_storage.read_artifact("reviews/review-obsolete/result.json") is None
-
-
-def test_postgres_upsert_promotes_navigation_stub_and_first_chapter(pg_storage):
-    from wenyi_core.models.glossary import STATUS_CONTEXT_DEPENDENT, TYPE_NAVIGATION, GlossaryTerm
-
-    assert (
-        pg_storage.upsert_term(GlossaryTerm("长安", "Chang'an", type=TYPE_NAVIGATION)) == "inserted"
-    )
-    assert (
-        pg_storage.upsert_term(GlossaryTerm("长安", "Chang'an", type="place"), chapter=2)
-        == "unchanged"
-    )
-    promoted = pg_storage.get_term("长安")
-    assert promoted is not None
-    assert promoted.type == "place"
-    assert promoted.first_chapter == 2
-    assert (
-        pg_storage.upsert_term(GlossaryTerm("长安", "Chang'an", type=TYPE_NAVIGATION))
-        == "unchanged"
-    )
-    still_place = pg_storage.get_term("长安")
-    assert (
-        still_place is not None and still_place.type == "place" and still_place.first_chapter == 2
-    )
-
-    # Context-dependent merge branch also promotes navigation -> entity without demotion.
-    assert (
-        pg_storage.upsert_term(
-            GlossaryTerm("大人", "Lord", type=TYPE_NAVIGATION, status=STATUS_CONTEXT_DEPENDENT)
-        )
-        == "inserted"
-    )
-    assert (
-        pg_storage.upsert_term(GlossaryTerm("大人", "My Lord", type="appellation"), chapter=4)
-        == "unchanged"
-    )
-    merged = pg_storage.get_term("大人")
-    assert merged is not None
-    assert merged.type == "appellation"
-    assert merged.first_chapter == 4
-    assert "Lord" in merged.target and "My Lord" in merged.target
 
 
 def test_locks_do_not_starve_shared_pool_connections(pg_pool, tmp_path):

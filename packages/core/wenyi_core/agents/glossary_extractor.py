@@ -708,7 +708,6 @@ class GlossaryExtractor(Agent):
             existing,
             source_text,
             budget=self.config.pipeline.glossary_prompt_tokens,
-            mode=self.config.pipeline.batch_glossary,
         )
         return ExtractionRequest(source_text, target_text, tuple(existing), tuple(all_existing))
 

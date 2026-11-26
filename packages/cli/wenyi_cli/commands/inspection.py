@@ -174,12 +174,6 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
         else:
             console.print("  Last failure: none")
 
-        polish = report["polish"]
-        if polish:
-            console.print(
-                f"  Background polish: polished {polish['polished']}  "
-                f"failed {polish['failed']}  pending {polish['pending']}"
-            )
         usage = report["usage"]
         if usage:
             console.print(

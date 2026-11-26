@@ -143,12 +143,7 @@ const zhCN = {
   "events.chapterReviewIssues": "第 {chapter} 章审校：{count} 个问题",
   "events.exportedFiles": "导出文件：{files}",
   "events.projectInitializedChapters": "项目初始化：{count} 章",
-  "events.glossaryBibleCompiled":
-    "全书术语词典已编译（{seeded} 条术语，{quotes} 条重复引文）",
-  "events.glossaryBibleReused": "已复用全书术语词典（{seeded} 条术语）",
-  "events.glossaryBibleCheckpointReused": "已从检查点继续编译全书术语词典（{seeded} 条术语）",
-  "events.consistencySweepCompleted":
-    "全书一致性巡检完成（补齐术语 {glossary} 处，修正漂移 {drift} 处）",
+  "events.cjkGlossarySeeded": "已预生成 CJK 术语种子（{seeded} 条术语）",
   "events.noEventsYet": "暂无事件。",
   "export.exportTaskSubmitted": "导出任务已提交",
   "export.saveAs": "另存为",
@@ -508,30 +503,21 @@ const zhCN = {
   "settings.operationModel": "{operation}模型",
   "settings.bookUnderstanding": "全书预理解",
   "settings.polishing": "润色",
-  "settings.consistencySweep": "全书一致性巡检",
-  "settings.consistencySweepHelp":
-    "全部章节译完后，补齐遗漏术语并校准跨章称谓或称号漂移。",
-  "settings.deterministicHygiene": "确定性格式整理",
-  "settings.deterministicHygieneHelp":
-    "每章完成后修复泄漏的 \\n；不改动标点、分行与译名。",
-  "settings.glossaryMode": "术语模式",
-  "settings.glossaryModeHelp":
-    "“逐批抽取”在翻译过程中按批提取术语；“全书预编译词典”在翻译前先生成全书术语词典、规范与重复引文定译，并支持多章并行翻译。",
-  "settings.glossaryModeIncremental": "逐批抽取",
-  "settings.glossaryModeCompiled": "全书预编译词典",
   "settings.polishMode": "润色模式",
   "settings.polishModeHelp":
-    "“全量润色”改写每一批译文；“稀疏精修”先审后改，仅对检出语义、术语、语气或格式缺陷的段落定向修订。",
+    "“全量润色”改写每一批译文；“稀疏精修”对照原文仅对存在缺陷的段落定向修订。",
   "settings.polishModeFull": "全量润色",
   "settings.polishModeSparse": "稀疏精修",
   "settings.chapterConcurrency": "章节并行数",
   "settings.chapterConcurrencyHelp":
-    "同时翻译的章节数，仅在术语模式为“全书预编译词典”时生效。",
-  "settings.batchGlossary": "批次术语范围",
-  "settings.batchGlossaryHelp":
-    "“全量术语表”会向每个翻译与润色批次发送完整术语表；“仅当前批次相关”只发送命中该批原文、后文参考、注释及章节摘要的条目（推荐用于长篇），全书审校仍接收完整术语表。",
-  "settings.batchGlossaryAll": "全量术语表",
-  "settings.batchGlossaryRelevant": "仅当前批次相关",
+    "同时翻译的章节数（1 为串行；>1 自动预生成 CJK 术语种子并多章并行）。",
+  "settings.polishConcurrency": "润色并行数",
+  "settings.polishConcurrencyHelp": "串行翻译模式下的后台润色并发数（1 为同步）。",
+  "settings.glossaryPromptTokens": "术语前缀预算（tokens）",
+  "settings.glossaryPromptTokensHelp":
+    "固定在缓存系统前缀中的最大术语 token 数（0 表示不限制，超出部分按批匹配）。",
+  "settings.skipBoilerplate": "跳过抓取水印",
+  "settings.skipBoilerplateHelp": "导入时自动标记并跳过网文抓取站点水印与广告行。",
   "settings.applyAutofixesToTheSavedTranslation":
     "审校后自动修复并写回正式译文",
   "settings.paragraphAnnotationAlignment": "逐段注释定位",
@@ -615,8 +601,7 @@ const zhCN = {
   "progress.stage.prescan": "正在预扫章节…",
   "progress.stage.style": "正在分析书籍风格…",
   "progress.stage.synopsis": "正在生成全书概要…",
-  "progress.stage.compilingBible": "正在编译全书术语词典…",
-  "progress.stage.consistencySweep": "正在执行全书一致性巡检…",
+  "progress.stage.seedingGlossary": "正在预生成 CJK 术语种子…",
   "progress.stage.chapter": "第 {count} 章",
   "progress.stage.translationDone": "翻译完成",
   "progress.stage.assembling": "正在组装译文…",

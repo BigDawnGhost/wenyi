@@ -447,3 +447,34 @@ class _PrecisionRun:
             if failures:
                 raise failures[0]
         return [candidates[candidate] for candidate in _DRAFT_IDS]
+
+
+def save_precision_batch(store: Storage, plan: BatchPlan, result: BatchResult) -> Chapter:
+    """Merge accepted pending segments into a fresh chapter without losing manual edits."""
+    with store.state_lock():
+        publication = PrecisionBatchExecutor.prepared_publication(store, result)
+        if (
+            publication.get("segment_indices") != list(plan.segment_indices)
+            or len(result.targets) != len(plan.sources)
+            or len(result.before_polish) != len(plan.sources)
+        ):
+            raise PrecisionError("The precision publication index is not aligned to its batch")
+        chapter = store.load_chapter(plan.chapter)
+        segments = chapter.text_segments[plan.start_index : plan.start_index + len(plan.sources)]
+        if (
+            tuple(segment.index for segment in segments) != plan.segment_indices
+            or tuple(segment.source for segment in segments) != plan.sources
+        ):
+            raise PrecisionError("The precision batch source changed before publication")
+        for segment, target, before_polish in zip(segments, result.targets, result.before_polish):
+            if segment.target is not None and (
+                segment.target != target or segment.target_before_polish != before_polish
+            ):
+                raise PrecisionError(
+                    "The precision batch was edited before publication; saved candidates are retained"
+                )
+        for segment, target, before_polish in zip(segments, result.targets, result.before_polish):
+            segment.target = target
+            segment.target_before_polish = before_polish
+        store.save_chapter(chapter)
+        return chapter
