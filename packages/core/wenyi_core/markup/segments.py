@@ -417,9 +417,6 @@ _LOOSE_TEXT_CONTAINERS = frozenset(
         "details",
         "summary",
         "address",
-        "pre",
-        "form",
-        "fieldset",
     }
 )
 _NON_PROSE_TAGS = frozenset(
@@ -458,6 +455,7 @@ _F_DESC_CANDIDATE = 1 << 2
 _F_DESC_ANY_BLOCK = 1 << 3
 _F_DESC_SPLIT = 1 << 4
 _F_DESC_NON_PROSE = 1 << 5
+_F_DESC_NOTE_MARKER = 1 << 6
 _ASCII_WS = " \t\n\r\x0b\x0c"
 
 
@@ -489,6 +487,7 @@ def _compute_flags(root: Tag | BeautifulSoup) -> dict[int, int]:
                 f |= _F_PROSE
             if isinstance(child, Tag):
                 cname = child.name
+                is_href_link = cname == "a" and child.has_attr("href")
                 if (
                     cname not in _ATOMIC_INLINE_TAGS
                     and cname not in _NON_PROSE_TAGS
@@ -510,13 +509,24 @@ def _compute_flags(root: Tag | BeautifulSoup) -> dict[int, int]:
                     or cname in _STRUCTURAL_BOUNDARY_TAGS
                     or cname in _NON_PROSE_TAGS
                     or cname == "br"
-                    or (cname not in _ATOMIC_INLINE_TAGS and (cf & _F_DESC_SPLIT))
+                    or (
+                        cname not in _ATOMIC_INLINE_TAGS
+                        and not is_href_link
+                        and (cf & _F_DESC_SPLIT)
+                    )
+                    or (is_href_link and (cf & _F_DESC_ANY_BLOCK))
                 ):
                     f |= _F_DESC_SPLIT
                 if cname in _NON_PROSE_TAGS or (
                     cname not in _ATOMIC_INLINE_TAGS and (cf & _F_DESC_NON_PROSE)
                 ):
                     f |= _F_DESC_NON_PROSE
+                if cname in {"sup", "sub"} or (
+                    cname not in _ATOMIC_INLINE_TAGS
+                    and cname not in _NON_PROSE_TAGS
+                    and (cf & _F_DESC_NOTE_MARKER)
+                ):
+                    f |= _F_DESC_NOTE_MARKER
         flags[id(node)] = f
     return flags
 
@@ -613,9 +623,11 @@ def _schema7_translation_targets(soup: BeautifulSoup, *, skip_navigation: bool) 
                         for child in node.children
                     )
                     if valid_link:
-                        split_link = bool(lf & _F_DESC_ANY_BLOCK)
+                        split_link = bool(lf & _F_DESC_ANY_BLOCK) or (
+                            bool(lf & _F_DESC_SPLIT) and not bool(lf & _F_DESC_NOTE_MARKER)
+                        )
                         if not split_link and not excluded:
-                            targets.extend(_split_direct_break_lines(link, soup))
+                            targets.append(link)
                         for child in reversed(list(node.children)):
                             if child is link:
                                 if split_link:
@@ -642,7 +654,7 @@ def _schema7_translation_targets(soup: BeautifulSoup, *, skip_navigation: bool) 
         ):
             items: list[tuple] = []
             run_buf: list[Tag | NavigableString] = []
-            prev_inline_split = False
+            prev_inline_split = loose_inline
 
             def flush(*, trail_split: bool) -> None:
                 if not run_buf:
@@ -653,15 +665,21 @@ def _schema7_translation_targets(soup: BeautifulSoup, *, skip_navigation: bool) 
                     if prev_inline_split:
                         lead_ws, trimmed = _trim_inline_boundary_space(run_buf[0], leading=True)
                         if lead_ws is not None and trimmed is not None:
-                            replacement = soup.new_string(trimmed)
-                            run_buf[0].replace_with(replacement)
-                            run_buf[0] = replacement
+                            if trimmed:
+                                replacement = soup.new_string(trimmed)
+                                run_buf[0].replace_with(replacement)
+                                run_buf[0] = replacement
+                            elif len(run_buf) > 1:
+                                run_buf.pop(0).extract()
                     if trail_split:
                         trail_ws, trimmed = _trim_inline_boundary_space(run_buf[-1], leading=False)
                         if trail_ws is not None and trimmed is not None:
-                            replacement = soup.new_string(trimmed)
-                            run_buf[-1].replace_with(replacement)
-                            run_buf[-1] = replacement
+                            if trimmed:
+                                replacement = soup.new_string(trimmed)
+                                run_buf[-1].replace_with(replacement)
+                                run_buf[-1] = replacement
+                            elif len(run_buf) > 1:
+                                run_buf.pop().extract()
                     wrapper = soup.new_tag("span")
                     wrapper[LINE_WRAPPER_ATTR] = "true"
                     run_buf[0].insert_before(wrapper)
@@ -677,15 +695,24 @@ def _schema7_translation_targets(soup: BeautifulSoup, *, skip_navigation: bool) 
             for child in list(node.children):
                 if isinstance(child, Tag):
                     cname = child.name
-                    if cname == "br" or cname in _NON_PROSE_TAGS:
+                    if cname == "br":
                         flush(trail_split=False)
                         prev_inline_split = False
+                    elif cname in _NON_PROSE_TAGS:
+                        flush(trail_split=True)
+                        prev_inline_split = True
                     elif cname in _BLOCK_CANDIDATE_TAGS or cname in _STRUCTURAL_BOUNDARY_TAGS:
                         flush(trail_split=False)
                         items.append(("visit", child, next_nav, next_nav_li, False))
                         prev_inline_split = False
-                    elif cname not in _ATOMIC_INLINE_TAGS and (
-                        flags.get(id(child), 0) & _F_DESC_SPLIT
+                    elif (
+                        cname not in _ATOMIC_INLINE_TAGS
+                        and not (
+                            cname == "a"
+                            and child.has_attr("href")
+                            and not (flags.get(id(child), 0) & _F_DESC_ANY_BLOCK)
+                        )
+                        and (flags.get(id(child), 0) & _F_DESC_SPLIT)
                     ):
                         flush(trail_split=True)
                         items.append(("visit", child, next_nav, next_nav_li, True))
@@ -694,7 +721,7 @@ def _schema7_translation_targets(soup: BeautifulSoup, *, skip_navigation: bool) 
                         run_buf.append(child)
                 elif _is_text_string(child):
                     run_buf.append(child)
-            flush(trail_split=False)
+            flush(trail_split=loose_inline)
             for work in reversed(items):
                 stack.append(work)
             continue

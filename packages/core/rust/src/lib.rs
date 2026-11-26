@@ -71,10 +71,10 @@ fn ingest<'py>(
     epub_schema: Option<u32>,
 ) -> PyResult<Bound<'py, PyBytes>> {
     let data = guard(py, || {
-            let _admission = workers::admit();
-            reader::ingest_with_schema(&path, source_lang, target_lang, epub_schema)
-        })
-        .and_then(|result| result.map_err(value_error))?;
+        let _admission = workers::admit();
+        reader::ingest_with_schema(&path, source_lang, target_lang, epub_schema)
+    })
+    .and_then(|result| result.map_err(value_error))?;
     Ok(PyBytes::new(py, &data))
 }
 

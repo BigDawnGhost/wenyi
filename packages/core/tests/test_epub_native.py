@@ -503,7 +503,6 @@ def test_mixed_loose_text_containers_and_non_prose_boundaries(tmp_path, monkeypa
         "Loose with inline",
         "Section loose line",
         "Nested section line",
-        "raw code block",
     ]
     assert segments == legacy
 
@@ -727,8 +726,12 @@ def test_legacy_schema_export_and_object_refresh_do_not_shift_anchors(
             ["A", "B", "C", "D"],
         ),
         (
-            "<div><pre>code line</pre></div>",
-            ["code line"],
+            "<div>Intro<pre><code>if x:\n    return x</code></pre></div>",
+            ["Intro"],
+        ),
+        (
+            '<form><button type="submit">Submit</button></form>',
+            [],
         ),
         (
             '<div class="chapter"><header>第一章</header>正文一<br/>正文二</div>',
@@ -763,7 +766,11 @@ def test_legacy_schema_export_and_object_refresh_do_not_shift_anchors(
             ["Hello", "World"],
         ),
         (
-            '<a href="#target"><span id="inner">First</span><br/>Second</a>',
+            '<a href="#target"><div><span id="inner">First</span><br/>Second</div></a>',
+            ["First", "Second"],
+        ),
+        (
+            '<a id="outer"><span id="inner">First</span><br/>Second</a>',
             ["First", "Second"],
         ),
         (
@@ -771,8 +778,28 @@ def test_legacy_schema_export_and_object_refresh_do_not_shift_anchors(
             ["Line"],
         ),
         (
+            '<ul><li><a href="ch1.xhtml"><span>A<br/>B</span></a></li></ul>',
+            ["A", "B"],
+        ),
+        (
             "A <span>B<br/>C</span> D<br/>E",
             ["A", "B", "C", "D", "E"],
+        ),
+        (
+            "A<span> B<br/>C </span>D",
+            ["A", "B", "C", "D"],
+        ),
+        (
+            "<div>x<span> <b>B</b><br/>C </span> y</div>",
+            ["x", "B", "C", "y"],
+        ),
+        (
+            "<p>Hello <template>Hidden</template> world</p>",
+            ["Hello", "world"],
+        ),
+        (
+            "<div>A<?pagebreak 5?>B<br/>C</div>",
+            ["AB", "C"],
         ),
         (
             "<p><template><p>Hidden</p></template>Visible text</p>",
@@ -842,7 +869,8 @@ def test_legacy_schema_export_and_object_refresh_do_not_shift_anchors(
     ],
     ids=[
         "div-with-section",
-        "div-with-pre",
+        "div-with-pre-code",
+        "form-with-button",
         "div-with-header",
         "blockquote-with-footer",
         "div-with-figure",
@@ -851,9 +879,15 @@ def test_legacy_schema_export_and_object_refresh_do_not_shift_anchors(
         "div-inline-br",
         "div-inline-script",
         "div-direct-template",
-        "link-split-inner-id",
+        "link-block-split-inner-id",
+        "anchor-only-split-inner-id",
         "li-link-empty-block-id",
+        "li-link-nested-span-br",
         "split-inline-boundary-spaces",
+        "split-inline-inner-boundary-spaces",
+        "split-inline-inner-tag-boundary-spaces",
+        "p-template-boundary-spaces",
+        "mid-run-pi-order",
         "p-with-template-block",
         "p-with-noscript-block",
         "p-with-svg-foreignobject",
@@ -904,7 +938,7 @@ def test_schema7_edge_cases_rust_python_parity_and_export(body, expected, tmp_pa
                 if "<section>" in body:
                     assert "<section>" in xhtml
                 if "<pre>" in body:
-                    assert "<pre>" in xhtml
+                    assert "<pre><code>if x:\n    return x</code></pre>" in xhtml
                 if 'id="target"' in body or 'id="inner"' in body:
                     soup = BeautifulSoup(xhtml, "xml")
                     if 'id="target"' in body:
@@ -915,6 +949,48 @@ def test_schema7_edge_cases_rust_python_parity_and_export(body, expected, tmp_pa
                     assert all(a.find("a") is None for a in soup.find_all("a"))
                 if body == "A <span>B<br/>C</span> D<br/>E" and not bilingual:
                     assert "T0 <span>T1<br/>T2</span> T3<br/>T4" in xhtml
+                if body == "A<span> B<br/>C </span>D" and not bilingual:
+                    assert "T0<span> T1<br/>T2 </span>T3" in xhtml
+                if body == "<div>x<span> <b>B</b><br/>C </span> y</div>" and not bilingual:
+                    assert "<div>T0<span> T1<br/>T2 </span> T3</div>" in xhtml
+                if body == "<p>Hello <template>Hidden</template> world</p>" and not bilingual:
+                    assert "<p>T0 <template>Hidden</template> T1</p>" in xhtml
+                if body == '<ul><li><a href="ch1.xhtml"><span>A<br/>B</span></a></li></ul>':
+                    assert "<br" in xhtml and "<span>" in xhtml
+                if body == "<div>A<?pagebreak 5?>B<br/>C</div>" and not bilingual:
+                    assert "<div>T0<?pagebreak 5?><br/>T1</div>" in xhtml
+
+
+def test_noteref_link_with_br_preserves_annotation_and_marker(tmp_path, monkeypatch):
+    markup = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">'
+        '<body><div><a epub:type="noteref" href="#fn1">First<br/>Second<sup>1</sup></a></div>'
+        '<aside id="fn1" epub:type="footnote"><p>Footnote</p></aside></body></html>'
+    )
+    raw = markup.encode("utf-8")
+    _, legacy = _legacy_resource(raw, monkeypatch)
+    source = tmp_path / "noteref.epub"
+    document = _book(source, raw)
+    segs = document.chapters[0].segments
+    assert len(segs) == 2
+    assert segs == legacy
+    ann_items = segs[0].meta["epub_annotations"]["items"]
+    assert len(ann_items) == 1
+    assert ann_items[0]["relation"] == "noteref"
+    assert ann_items[0]["marker_text"] == "1"
+
+    segs[0].target = "Translated note text"
+    segs[1].target = "Translated footnote"
+    with closing(FileStorage(str(tmp_path / "state"))) as store:
+        store.init_from_document(document)
+        store.set_chapter_status(0, "done")
+        out = tmp_path / "out.epub"
+        assemble(store, str(source), str(out), "epub", bilingual=False, about_page=False)
+    with ZipFile(out) as zf:
+        xhtml = zf.read("content.xhtml").decode("utf-8")
+    assert "<sup>1</sup>" in xhtml
+    assert 'epub:type="noteref"' in xhtml
 
 
 def test_skip_navigation_excludes_loose_text_inside_nav_li(tmp_path):
