@@ -38,6 +38,7 @@ from .artifacts import FileArtifacts
 from .atomic_write import write_text_atomic
 from .chapter_publication import JOURNAL_NAME, JOURNAL_TEMPORARY_PREFIX, ChapterPublication
 from .io_path import to_io_path
+from .jsonl import append_jsonl_record, iter_jsonl_records
 from .locks import (
     ASSEMBLE_LOCK,
     EVENTS_LOCK,
@@ -776,25 +777,14 @@ class RunStore(FileArtifacts):
         """
         if self._batch_glossary_event_cache is None:
             completed: dict[int, set[str]] = {}
-            if self._exists(self.event_log_path):
-                with open(to_io_path(self.event_log_path), "r", encoding="utf-8") as f:
-                    for line in f:
-                        try:
-                            row = json.loads(line)
-                        except (json.JSONDecodeError, TypeError):
-                            continue
-                        if row.get("event") != "batch_glossary_extracted":
-                            continue
-                        ci = row.get("chapter")
-                        start = row.get("start_index")
-                        count = row.get("count")
-                        if not (
-                            isinstance(ci, int)
-                            and isinstance(start, int)
-                            and isinstance(count, int)
-                        ):
-                            continue
-                        completed.setdefault(ci, set()).add(self.batch_glossary_key(start, count))
+            for row in iter_jsonl_records(self.event_log_path):
+                if row.get("event") != "batch_glossary_extracted":
+                    continue
+                ci = row.get("chapter")
+                start = row.get("start_index")
+                count = row.get("count")
+                if isinstance(ci, int) and isinstance(start, int) and isinstance(count, int):
+                    completed.setdefault(ci, set()).add(self.batch_glossary_key(start, count))
             self._batch_glossary_event_cache = completed
         return set(self._batch_glossary_event_cache.get(chapter, set()))
 
@@ -810,8 +800,7 @@ class RunStore(FileArtifacts):
             **data,
         }
         with self.event_lock():
-            with open(to_io_path(self.event_log_path), "a", encoding="utf-8") as f:
-                f.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+            append_jsonl_record(self.event_log_path, row)
         if event == "batch_glossary_extracted" and self._batch_glossary_event_cache is not None:
             chapter = data.get("chapter")
             start = data.get("start_index")

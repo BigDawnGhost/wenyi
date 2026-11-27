@@ -186,8 +186,9 @@ class SqliteStorage:
             conn.execute("PRAGMA foreign_keys = ON")
             if conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
                 conn.execute("PRAGMA journal_mode = WAL")
-            # Every connection passes here, including the readers that drain on
-            # close, so the guard is stated once rather than at each open site.
+            # synchronous is connection-local. Set it before writing so SQLite syncs
+            # the WAL at transaction commit, including commits containing checkpoints.
+            conn.execute("PRAGMA synchronous = FULL")
             version = self._check_schema_version(conn)
             if not conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='artifacts'"
@@ -538,6 +539,10 @@ class SqliteStorage:
             return [row[0] for row in rows]
 
     def append_artifact_record(self, key: str, record: dict) -> None:
+        """Append atomically, joining the surrounding state transaction if present.
+
+        WAL sync is handled by SQLite at the outer commit, not per record.
+        """
         key = self._key(key)
         with self.state_lock():
             conn = self._connection()
