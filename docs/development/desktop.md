@@ -419,8 +419,6 @@ roughly 1280×800 and 1920×1080:
 
 - [ ] The main layout fills the window without leaking background (`h-dvh`) and
   survives resize and maximize.
-- [ ] The settings sticky action bar stays pinned while scrolling and keeps its
-  translucent blurred background.
 - [ ] Dialog overlays keep the 2px backdrop blur, center their content and
   scroll tall bodies inside the maximum height.
 - [ ] Native `<dialog>` editors (for example the paragraph editor) open and
@@ -437,8 +435,7 @@ Platform additions:
 
 - Windows/WebView2: the console shows no CSP violations, and the layout holds
   at 125% and 150% system scaling.
-- macOS/WKWebView: disclosure chevrons still rotate, and elastic trackpad
-  scrolling does not dislodge the sticky bar.
+- macOS/WKWebView: disclosure chevrons still rotate.
 - Linux/WebKitGTK: the first requests succeed (the timeout/abort path must work
   on this engine family); dialog backdrops still blur — a plain tint means the
   `-webkit-backdrop-filter` prefix went missing from the build; the WebKit-only

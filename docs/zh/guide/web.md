@@ -73,7 +73,7 @@ docker compose up -d --force-recreate api worker export-worker
 
 单纯重启容器不会重新读取 Compose 的环境文件。有任务运行时，按[升级说明](#upgrades)协调重建。
 
-尚未保存全局设置时，配置文件提供默认值，也是**恢复默认配置**的来源。一旦在 Web 中保存全局设置，生效文档保存在 PostgreSQL：修改挂载的 YAML 不会覆盖已保存设置。项目专属配置仍会应用；启动或恢复任务时会捕获该次执行的有效配置。详见[配置参考](../reference/configuration.md)和[工作台设置说明](workspace.md)。
+尚未保存全局设置时，配置文件提供默认值。一旦在 Web 中保存全局设置，生效文档保存在 PostgreSQL：修改挂载的 YAML 不会覆盖已保存设置。项目专属配置仍会应用；启动或恢复任务时会捕获该次执行的有效配置。详见[配置参考](../reference/configuration.md)和[工作台设置说明](workspace.md)。
 
 获取提供商模型列表不消耗模型 token；**测试连接**会发送真实模型请求，可能产生费用。具体操作见工作台指南。
 

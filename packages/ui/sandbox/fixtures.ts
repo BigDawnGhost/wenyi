@@ -196,8 +196,6 @@ function tableData(): Record<string, unknown> {
   return {
     "/capabilities": capabilities,
     "/settings": globalConfiguration,
-    "/settings/defaults": globalConfiguration,
-    "/settings/validate": globalConfiguration,
     "/desktop/external-credentials/mineru": {
       mode: "manual", storage: null, available: false, environment: "MINERU_API_KEY",
       system_storage_available: false, requires_key: true,
@@ -215,8 +213,6 @@ function tableData(): Record<string, unknown> {
     [`/projects/${pid}`]: project,
     [`/projects/${pid}/chapters`]: chapters,
     [`/projects/${pid}/config`]: configuration,
-    [`/projects/${pid}/config/defaults`]: configuration,
-    [`/projects/${pid}/config/validate`]: configuration,
     [`/projects/${pid}/models`]: configuration.routes,
     [`/projects/${pid}/preview`]: preview,
     [`/projects/${pid}/glossary/terms`]: [],
@@ -370,15 +366,15 @@ export interface FixtureResponse {
 }
 
 /**
- * Dev-sandbox runtime state: only the MOCK_API middleware passes this in, so
- * the Playwright suites keep the stateless fixture behavior. Projects start as
- * \"ready\"; starting a translation advances them through translating to done.
+ * Dev-sandbox state for settings and simulated workflow progress. Playwright
+ * uses isolated configuration writes without simulating live runs.
  */
 export interface SandboxState {
   runs: Record<string, { startedAt: number | null; pausedAt: number | null }>;
+  configurationWrites: Record<string, unknown>;
 }
 export function createSandboxState(): SandboxState {
-  return { runs: {} };
+  return { runs: {}, configurationWrites: {} };
 }
 
 export const RUN_MS = 15_000;
@@ -491,9 +487,9 @@ function familyFixture(path: string): FixtureResponse | null {
  * sandbox behave identically:
  *
  * - GET/HEAD: fixture table first, then 404 (tests notice unmocked reads).
- * - Other methods: per-test overrides, then mutation rules (create project,
- *   glossary import), then the table (save/validate respond with stored
- *   state), then a generic success so action buttons can complete.
+ * - Configuration PUTs update the mock document for subsequent reads.
+ * - Other methods: per-test overrides, explicit mutation rules, then the
+ *   table or a generic success so action buttons can complete.
  *
  * `options.unknownWrite = "notFound"` replaces that generic success with a
  * 404 so the offline template can surface unmocked write endpoints.
@@ -504,7 +500,7 @@ export function resolveFixture(
   rawBody?: string,
   overrides: Record<string, unknown> = {},
   sandbox?: SandboxState,
-  options?: { unknownWrite?: "ok" | "notFound" },
+  options?: { unknownWrite?: "ok" | "notFound"; configurationWrites?: Record<string, unknown> },
 ): FixtureResponse {
   const path = rawPath.replace(/^\/api/, "").split("?")[0];
   const verb = method.toUpperCase();
@@ -530,7 +526,8 @@ export function resolveFixture(
       }
     }
   }
-  const data = { ...tableData(), ...overrides };
+  const configurationWrites = sandbox?.configurationWrites ?? options?.configurationWrites;
+  const data = { ...tableData(), ...overrides, ...configurationWrites };
   const reader = path.match(/^(\/projects\/[^/]+)\/chapters\/(\d+)\/(window|updates|issues)$/);
   if (reader) {
     const sourcePath = `${reader[1]}/review/${reader[2]}`;
@@ -561,22 +558,29 @@ export function resolveFixture(
     if (family) return respond(family.json);
     return { status: 404, json: { detail: `Unexpected endpoint ${path}` } };
   }
-  if (path in overrides) return { status: 200, json: overrides[path] };
-  // Save and validate must echo the submitted document. The table stores one
-  // static configuration, so returning it here would replace the caller's
-  // draft with the fixture and make the page look as if it reloaded.
-  if (verb !== "GET" && /\/config(\/validate)?$/.test(path)) {
-    const submitted = JSON.parse(rawBody || "{}") as { yaml?: string };
-    const base = data[path.replace(/\/validate$/, "")] as typeof configuration | undefined;
-    if (submitted.yaml && base) {
-      return { status: 200, json: { ...base, yaml: submitted.yaml } };
+  if (verb === "PUT" && (path === "/settings" || /^\/projects\/[^/]+\/config$/.test(path)) && data[path]) {
+    const base = data[path] as typeof configuration | typeof globalConfiguration;
+    try {
+      const { yaml } = JSON.parse(rawBody || "{}") as { yaml: string };
+      const effective: unknown = JSON.parse(yaml);
+      const value = {
+        ...base, yaml, effective,
+        ...("revision" in base ? { revision: base.revision + 1 } : {}),
+      };
+      if (configurationWrites) configurationWrites[path] = value;
+      return { status: 200, json: value };
+    } catch {
+      return { status: 422, json: { detail: "The mock API accepts JSON configuration only." } };
     }
   }
-  if (verb !== "GET" && path === "/settings/validate") {
-    const submitted = JSON.parse(rawBody || "{}") as { yaml?: string };
-    if (submitted.yaml) {
-      return { status: 200, json: { ...globalConfiguration, yaml: submitted.yaml } };
-    }
+  if (path in overrides) return { status: 200, json: overrides[path] };
+  if (verb === "POST" && path === "/settings/models/ping/draft") {
+    const { draft_id: connection, models, provider } = JSON.parse(rawBody || "{}");
+    return { status: 200, json: Object.keys(models ?? {}).map(model => ({
+      profile: `${connection}/${model}`, connection, model, provider: provider?.kind,
+      endpoint: provider?.base_url ?? null, operations: [], ok: true, category: "ok",
+      message: "Mock connection passed.", status_code: null, latency_ms: 42,
+    })) };
   }
   if (verb === "POST" && path.endsWith("/glossary/terms/lookup")) {
     const sources = new Set((JSON.parse(rawBody || "{}") as { sources?: string[] }).sources);
@@ -627,6 +631,7 @@ export async function fakeApi(
   overrides: Record<string, unknown> = {},
   apiOrigin?: string,
 ) {
+  const configurationWrites = {};
   await page.routeWebSocket("**/ws/**", () => {});
   await page.route(apiOrigin ? `${apiOrigin}/**` : url => url.pathname.startsWith("/api/"), async (route) => {
     const url = new URL(route.request().url());
@@ -634,7 +639,9 @@ export async function fakeApi(
     const method = route.request().method();
     const rawBody =
       method === "GET" ? undefined : route.request().postData() ?? undefined;
-    const { status, json } = resolveFixture(method, pathname, rawBody, overrides);
+    const { status, json } = resolveFixture(method, pathname, rawBody, overrides, undefined, {
+      configurationWrites,
+    });
     return route.fulfill({ status, json });
   });
 }

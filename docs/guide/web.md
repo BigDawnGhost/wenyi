@@ -75,7 +75,7 @@ docker compose up -d --force-recreate api worker export-worker
 
 A plain container restart does not reload Compose's environment file. Coordinate recreation with running work as described under [upgrades](#upgrades).
 
-The configuration file supplies defaults when no global settings have been saved, and supplies the defaults offered by **Restore defaults**. Once global settings are saved in Web, PostgreSQL holds the active settings document: editing the mounted YAML does not overwrite it. Project-specific settings still apply, and starting or resuming a task captures its effective configuration. See the [configuration reference](../reference/configuration.md) and [workspace settings guidance](workspace.md).
+The configuration file supplies defaults when no global settings have been saved. Once global settings are saved in Web, PostgreSQL holds the active settings document: editing the mounted YAML does not overwrite it. Project-specific settings still apply, and starting or resuming a task captures its effective configuration. See the [configuration reference](../reference/configuration.md) and [workspace settings guidance](workspace.md).
 
 Fetching a provider's model list does not consume model tokens. **Test connection** sends live model requests and can incur charges; the workspace guide explains these actions.
 
