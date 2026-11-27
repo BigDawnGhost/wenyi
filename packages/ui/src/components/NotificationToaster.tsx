@@ -43,6 +43,27 @@ function useSidebarWidth() {
   return width;
 }
 
+function isNotificationText(target: EventTarget): target is HTMLElement {
+  return target instanceof HTMLElement && target.matches(".notification-text");
+}
+
+function keepTextPressUnfocused(target: HTMLElement, boundary: HTMLElement) {
+  // Sonner's toast, list and region are all keyboard focus targets. A mouse
+  // press on their text would focus an ancestor, and a modal's focus trap
+  // would redirect that focus before the browser could start selecting.
+  // Skip these focus stops only for the native mousedown default action.
+  const focusStops = new Map<HTMLElement, string>();
+  for (let node = target.parentElement; node && node !== boundary; node = node.parentElement) {
+    const tabIndex = node.getAttribute("tabindex");
+    if (tabIndex === null) continue;
+    focusStops.set(node, tabIndex);
+    node.removeAttribute("tabindex");
+  }
+  requestAnimationFrame(() => {
+    for (const [node, tabIndex] of focusStops) node.setAttribute("tabindex", tabIndex);
+  });
+}
+
 /** Mount once in the shared shell, outside the scrolling route content. */
 export function NotificationToaster() {
   const { theme } = useTheme();
@@ -68,7 +89,7 @@ export function NotificationToaster() {
     document.head.append(tag);
     return () => tag.remove();
   }, []);
-  return createPortal(
+  const toaster = (
     <Toaster
       theme={theme}
       style={{
@@ -95,14 +116,32 @@ export function NotificationToaster() {
           // followed by a pop. Keep the movement inside that window.
           toast: "pointer-events-none min-h-16 items-start gap-3 rounded-xl py-5 pl-4 pr-16 text-sm "
             + "shadow-e4",
-          content: "min-w-0",
+          // Only the adapter's inline text, not the layout boxes, takes a hit.
+          content: "pointer-events-none min-w-0",
           icon: "m-0 h-5 w-5 [&_svg]:m-0",
           // Keep Sonner's dismissal behavior, but move the target inside the card.
           closeButton: "pointer-events-auto left-auto right-2.5 top-2.5 h-11 w-11 transform-none rounded-lg border-0 "
             + "!bg-transparent !text-inherit hover:!bg-hover focus-visible:!bg-hover active:!bg-selected",
         },
       }}
-    />,
+    />
+  );
+  return createPortal(
+    <div
+      className="contents"
+      onPointerDownCapture={(event) => {
+        // Sonner captures the pointer before checking for a selection on move.
+        // Stop its swipe handler, not the browser's default selection.
+        if (isNotificationText(event.target)) event.stopPropagation();
+      }}
+      onMouseDown={(event) => {
+        if (event.button === 0 && isNotificationText(event.target)) {
+          keepTextPressUnfocused(event.target, event.currentTarget);
+        }
+      }}
+    >
+      {toaster}
+    </div>,
     document.body,
   );
 }

@@ -55,7 +55,7 @@ export function StructuredData({
     );
   if (typeof value !== "object")
     return (
-      <span className="whitespace-pre-wrap break-words text-sm">
+      <span className="select-text whitespace-pre-wrap break-words text-sm">
         {typeof value === "boolean"
           ? value
             ? tr("data.yes")
@@ -74,7 +74,7 @@ export function StructuredData({
       </div>
     );
   return (
-    <dl className="space-y-2 text-sm">
+    <dl className="select-text space-y-2 text-sm">
       {Object.entries(value as Record<string, unknown>).map(([key, item]) => (
         <div
           key={key}

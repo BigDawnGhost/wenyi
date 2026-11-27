@@ -72,7 +72,7 @@ export function TranslationDiff({
   const tooLarge = mode === "changes" && !identical && parts === undefined;
   const displayedMode = tooLarge ? "full" : mode;
   const prose =
-    "whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]";
+    "select-text whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]";
   const removed = "bg-diff-removed text-diff-removed-foreground";
   const added = "bg-diff-added text-diff-added-foreground";
 

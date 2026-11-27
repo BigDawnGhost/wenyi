@@ -102,7 +102,7 @@ export function ReviewIssues({
                 </span>
                 <Badge variant={state.tone}>{t(state.key)}</Badge>
               </div>
-              <p className="text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">
+              <p className="select-text text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">
                 {item.detail || t(itemType(item))}
               </p>
               <details>

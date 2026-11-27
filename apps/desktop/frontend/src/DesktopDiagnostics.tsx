@@ -39,7 +39,7 @@ export function DiagnosticExportButton() {
         <p className="text-sm text-muted-foreground">{t("diagnostics.partial")}</p>
         {busy && <p role="status">{t("diagnostics.saving")}</p>}
         {error && <p role="alert" className="text-destructive">{t("diagnostics.failed")}</p>}
-        {saved && <p role="status" className="break-all">{t("diagnostics.saved", { path: saved })}</p>}
+        {saved && <p role="status" className="select-text break-all">{t("diagnostics.saved", { path: saved })}</p>}
         <div className="flex flex-wrap gap-3">
           <Button disabled={busy} onClick={() => void save()}>{t("diagnostics.choose")}</Button>
           {busy && <Button variant="outline" onClick={() => {
@@ -88,7 +88,7 @@ export function DesktopDiagnostics() {
   return <SettingsSection title={t("diagnostics.title")} data-testid="desktop-diagnostics">
     <p className="text-sm text-muted-foreground">{t("diagnostics.retention")}</p>
     {data && <div className="space-y-2 text-sm">
-      <p className="break-all">{t("diagnostics.location", { path: data.directory ?? "—" })}</p>
+      <p className="select-text break-all">{t("diagnostics.location", { path: data.directory ?? "—" })}</p>
       <p>{t("diagnostics.size", { size: (data.bytes / 1048576).toFixed(1), dropped: data.dropped })}</p>
       {data.foreignFiles > 0 && <p role="status" data-testid="diagnostics-foreign">
         {t("diagnostics.foreign", {

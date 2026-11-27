@@ -886,5 +886,65 @@ def _paragraph_block():
     }
 
 
+def _debug_frames(caplog, message: str, logger_name: str) -> list:
+    """Return captured records for one debug line that carry an exc_info payload."""
+    return [
+        record
+        for record in caplog.records
+        if record.name == logger_name
+        and record.getMessage() == message
+        and record.exc_info is not None
+    ]
+
+
+def test_conversion_fallback_logs_frames_without_the_service_message(monkeypatch, tmp_path, caplog):
+    caplog.set_level(logging.DEBUG)
+
+    def convert(_path, _output, **_kwargs):
+        raise RuntimeError(_REFLECTED)
+
+    monkeypatch.setattr(pdf_reader, "convert_pdf_to_epub", convert)
+    source = tmp_path / "book.pdf"
+    source.write_bytes(b"fake PDF")
+    cache = tmp_path / "cache"
+
+    with pytest.raises(MinerUError, match="PDF conversion failed") as caught:
+        pdf_reader.read_pdf(str(source), "en", "zh", cache_dir=str(cache), api_token=_TOKEN)
+
+    records = _debug_frames(caplog, "Unexpected MinerU conversion failure", pdf_reader.logger.name)
+    assert records, "the conversion fallback must log its frame stack at debug level"
+    assert records[0].exc_info and records[0].exc_info[2] is not None
+    _assert_safe(caught.value, caplog)
+    assert not list(cache.rglob("*.epub"))
+
+
+def test_derived_epub_parse_fallback_logs_frames_without_the_parser_message(
+    monkeypatch, tmp_path, caplog
+):
+    caplog.set_level(logging.DEBUG)
+
+    def convert(_path, output, **_kwargs):
+        output.write_bytes(b"fake derived EPUB")
+
+    def parse(*_args):
+        raise ValueError(_REFLECTED)
+
+    monkeypatch.setattr(pdf_reader, "convert_pdf_to_epub", convert)
+    monkeypatch.setattr(pdf_reader, "read_epub", parse)
+    source = tmp_path / "book.pdf"
+    source.write_bytes(b"fake PDF")
+    cache = tmp_path / "cache"
+
+    with pytest.raises(MinerUError, match="could not read the MinerU source EPUB") as caught:
+        pdf_reader.read_pdf(str(source), "en", "zh", cache_dir=str(cache), api_token=_TOKEN)
+
+    records = _debug_frames(
+        caplog, "Could not read the derived MinerU source EPUB", pdf_reader.logger.name
+    )
+    assert records, "the parse fallback must log its frame stack at debug level"
+    assert records[0].exc_info and records[0].exc_info[2] is not None
+    _assert_safe(caught.value, caplog)
+
+
 if __name__ == "__main__":
     unittest.main()
