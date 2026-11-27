@@ -193,7 +193,13 @@ class ReviewRunStore:
         """
         return status in {"running", "interrupted", "failed"}
 
-    def start(self, *, reviewed_content_digest: str, metadata: dict[str, Any]) -> None:
+    def start(
+        self,
+        *,
+        reviewed_content_digest: str,
+        metadata: dict[str, Any],
+        workflow_run_id: str | None = None,
+    ) -> None:
         """Create a running result and save parameters before the first model call.
         On resume with status=running/interrupted/failed, preserve existing results and
         metadata instead of overwriting them.
@@ -201,7 +207,11 @@ class ReviewRunStore:
         self._reviewed_content_digest = reviewed_content_digest
         result_path = os.path.join(self.run_dir, "result.json")
         existing = self._read(result_path)
+        # Ownership is per invocation, not part of the content/config cache fingerprint.
+        owner = {"workflow_run_id": workflow_run_id} if workflow_run_id else {}
         if isinstance(existing, dict) and self.is_resumable_status(existing.get("status")):
+            existing.pop("workflow_run_id", None)
+            existing.update(owner)
             existing["status"] = "running"
             existing["termination"] = "running"
             existing["resumed_at"] = datetime.now().astimezone().isoformat(timespec="microseconds")
@@ -218,6 +228,7 @@ class ReviewRunStore:
             result_path,
             {
                 "review_id": self.review_id,
+                **owner,
                 "status": "running",
                 "termination": "not_started",
                 "reviewed_content_digest": reviewed_content_digest,

@@ -38,9 +38,9 @@ def test_pause_requires_an_active_matching_job(desktop_context, status):
     pid = backend.create_project("Pause identity", "en", "zh", {})
     backend.create_job(pid, "translation", "run", run_id="run", status=status)
     backend.set_project_status(pid, "translating")
-    active = status in {"queued", "running"}
-    assert backend.request_pause(pid, "run") is active
-    assert backend.get_project(pid)["status"] == ("pausing" if active else "translating")
+    expected = {"queued": "paused", "running": "pausing"}.get(status)
+    assert backend.request_pause(pid, "run") == expected
+    assert backend.get_project(pid)["status"] == (expected or "translating")
 
 
 def test_pause_cannot_cancel_a_newer_run(desktop_context):
@@ -52,8 +52,8 @@ def test_pause_cannot_cancel_a_newer_run(desktop_context):
     backend.set_project_status(pid, "translating")
     assert not backend.request_pause(pid, "old")
     assert backend.get_project(pid)["status"] == "translating"
-    assert backend.request_pause(pid, "new")
-    assert backend.request_pause(pid, "new"), "Repeated pause for the same active run is harmless"
+    assert backend.request_pause(pid, "new") == "paused"
+    assert backend.request_pause(pid, "new") is None
 
 
 @pytest.fixture

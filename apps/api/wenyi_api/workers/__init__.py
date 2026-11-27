@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
+from dataclasses import asdict, replace
 
 from arq.connections import RedisSettings
 from wenyi_backend.context import use_context
+from wenyi_backend.execution import process
+from wenyi_backend.execution.bindings import workflow_dependencies
 from wenyi_backend.workers.tasks import (
     run_chapter_translation,
     run_export,
@@ -43,6 +47,27 @@ async def startup(ctx: dict) -> None:
     ctx["recovery_task"] = asyncio.create_task(_recovery_loop(ctx))
 
 
+async def workflow_startup(ctx: dict) -> None:
+    await startup(ctx)
+    context = ctx["backend"]
+    ctx["backend"] = replace(context, run_workflow_process=workflow_supervisor(context))
+
+
+def workflow_supervisor(context):
+    dependencies = workflow_dependencies(context)
+    config = postgres_repository(context).settings
+
+    async def supervise(request):
+        await process.run(
+            request,
+            dependencies,
+            [sys.executable, "-m", "wenyi_api.workers.workflow_child"],
+            {"settings": asdict(config)},
+        )
+
+    return supervise
+
+
 async def shutdown(ctx: dict) -> None:
     task = ctx.pop("recovery_task", None)
     if task is not None:
@@ -62,7 +87,7 @@ class WorkerSettings:
         run_chapter_translation,
         run_review,
     ]
-    on_startup = startup
+    on_startup = workflow_startup
     on_shutdown = shutdown
     redis_settings = _redis_settings()
     queue_name = WORKFLOW_QUEUE

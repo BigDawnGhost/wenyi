@@ -7,8 +7,8 @@ import type { Server as NodeHttpServer, IncomingMessage } from "node:http";
 import type { Http2SecureServer } from "node:http2";
 import type { Socket as NetSocket } from "node:net";
 import type { Duplex } from "node:stream";
-import type { SandboxState } from "./fixtures";
-import { snapshotFrame, tickFrame } from "./progress-frames";
+import type { SandboxState } from "./fixtures.ts";
+import { snapshotFrame, tickFrame } from "./progress-frames.ts";
 
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 

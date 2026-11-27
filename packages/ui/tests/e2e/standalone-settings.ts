@@ -139,7 +139,6 @@ for (const chinese of [false, true]) {
     await expect(nav.getByRole("link")).toHaveCount(categories.en.length);
     await expect(page.getByLabel(chinese ? "界面语言" : "Interface language")).toBeVisible();
     await expect(page.getByLabel(chinese ? "润色" : "Polishing", { exact: true })).not.toBeVisible();
-    await expect(page.locator('[data-slot="settings.actions"]')).toBeInViewport();
     await page.screenshot({ path: testInfo.outputPath("settings-general.png") });
     await nav.getByRole("link", { name: chinese ? "翻译流程" : "Workflow", exact: true }).click();
     await expect(page).toHaveURL("/settings/workflow");
@@ -170,12 +169,13 @@ test("direct settings links have a safe return destination", async ({ page }) =>
 
 test("models in use cannot be deleted and do not show their route references", async ({ page }) => {
   const base = globalConfiguration.effective;
-  const effective = { ...base, llm: { ...base.llm, models: {
-    ...base.llm.models, "deepseek/alternate": {},
-  } } };
-  await page.route("**/api/settings", route => route.fulfill({ json: {
+  const effective = {
+    ...base,
+    llm: { ...base.llm, models: { ...base.llm.models, "deepseek/alternate": {} } },
+  };
+  await fakeApi(page, { "/settings": {
     ...globalConfiguration, effective, yaml: JSON.stringify(effective),
-  } }));
+  } });
   await page.goto("/settings/defaults");
   const stage = page.getByRole("combobox", { name: "Model: Translate chapters in batches", exact: true });
   await chooseOption(stage, "deepseek / alternate");
@@ -502,8 +502,6 @@ for (const chinese of [false, true]) {
     await yaml.scrollIntoViewIfNeeded();
     await expect(yaml).toBeInViewport();
     await page.screenshot({ path: testInfo.outputPath("project-settings-inline-yaml.png") });
-    await page.getByRole("button", { name: chinese ? "校验配置" : "Validate configuration", exact: true }).click();
-    await expect(page.getByText(chinese ? "配置有效，尚未保存" : "Configuration is valid but not saved yet", { exact: true })).toBeVisible();
     await expect(main.getByRole("table")).toHaveCount(0);
     expect(routeRequests).toEqual([]);
   });
@@ -544,7 +542,6 @@ for (const scope of ["global", "project"] as const) {
     await expect(page.getByRole("option", { name: "high", exact: true })).toHaveAttribute("aria-selected", "true");
     await page.getByRole("option", { name: "max", exact: true }).click();
     await expect(verify).toHaveText("high");
-    await page.getByRole("button", { name: "Save configuration", exact: true }).click();
     await expect(page.getByText(scope === "global" ? "Global settings saved" : "Project settings saved", { exact: true })).toBeVisible();
     expect(writes[0]["translation.body"]).toMatchObject({
       model: "deepseek/deepseek-flash", thinking: "max",
@@ -553,11 +550,10 @@ for (const scope of ["global", "project"] as const) {
     await page.reload();
     await expect(translation).toHaveText("max");
     await chooseOption(translation, "high");
-    await page.getByRole("button", { name: "Save configuration", exact: true }).click();
     await expect.poll(() => writes[1]?.["translation.body"].thinking).toBe("high");
   });
 
-  test(`${scope} basic edits preserve advanced values before and after YAML validation`, async ({ page }) => {
+  test(`${scope} basic edits preserve advanced values before and after applying YAML`, async ({ page }) => {
     const base = scope === "global" ? globalConfiguration : configuration;
     const models = {
       ...configuration.registered_models,
@@ -587,10 +583,6 @@ for (const scope of ["global", "project"] as const) {
       }
       await route.fulfill({ json: saved });
     });
-    await page.route(`**/api${endpoint}/validate`, async route => {
-      const { yaml } = route.request().postDataJSON();
-      await route.fulfill({ json: { ...saved, yaml, effective: JSON.parse(yaml) } });
-    });
     await page.goto(scope === "global" ? "/settings/defaults" : `/projects/${pid}/settings`);
     await expect(page.getByRole("combobox", { name: "Default model", exact: true })).toHaveCount(0);
     const review = page.getByRole("combobox", { name: "Model: Verify review evidence" });
@@ -602,10 +594,7 @@ for (const scope of ["global", "project"] as const) {
     await page.keyboard.press("Escape");
     if (scope === "global") await page.getByRole("link", { name: "Workflow", exact: true }).click();
     await page.getByLabel("Apply autofixes to the saved translation after review", { exact: true }).uncheck();
-    const save = page.getByRole("button", { name: "Save configuration", exact: true });
-    await save.click();
-    await expect.poll(() => writes).toBe(1);
-    await expect(save).not.toHaveAttribute("aria-busy", "true");
+    await expect.poll(() => writes).toBe(2);
     const expected = {
       ...document,
       llm: {
@@ -619,14 +608,15 @@ for (const scope of ["global", "project"] as const) {
     const yaml = page.getByRole("textbox", { name: "Advanced YAML configuration", exact: true });
     const tuned = { ...expected, segment: { ...expected.segment, max_tokens_per_batch: 3100 } };
     await yaml.fill(JSON.stringify(tuned));
-    await page.getByRole("button", { name: "Validate configuration", exact: true }).click();
-    await expect(page.getByText("Configuration is valid but not saved yet", { exact: true })).toBeVisible();
-    expect(writes).toBe(1);
+    expect(writes).toBe(2);
+    const apply = page.getByRole("button", { name: "Apply YAML", exact: true });
+    await apply.click();
+    await expect(apply).toHaveCount(0);
+    expect(writes).toBe(3);
     await expect.poll(async () => JSON.parse(await yaml.inputValue())).toEqual(tuned);
     if (scope === "global") await page.getByRole("link", { name: "Workflow", exact: true }).click();
     await page.getByLabel("Book understanding", { exact: true }).uncheck();
-    await page.getByRole("button", { name: "Save configuration", exact: true }).click();
-    await expect.poll(() => writes).toBe(2);
+    await expect.poll(() => writes).toBe(4);
     expect(saved.effective).toEqual({
       ...tuned,
       pipeline: { ...tuned.pipeline, book_understanding: false },
@@ -681,7 +671,6 @@ for (const { ref, label, levels, defaultEffort } of [
     if (defaultEffort) await expect(thinking).toHaveText(defaultEffort);
     else await expect(thinking).toHaveCount(0);
     expect(JSON.parse(await yaml.inputValue()).llm.routes[operation]).toEqual(expected);
-    await page.getByRole("button", { name: "Save configuration", exact: true }).click();
     await expect(page.getByText("Project settings saved", { exact: true })).toBeVisible();
     expect(saved.effective.llm.routes[operation]).toEqual(expected);
     await page.reload();
@@ -690,35 +679,60 @@ for (const { ref, label, levels, defaultEffort } of [
   });
 }
 
-test("an in-flight project validation does not replace a newer YAML edit", async ({ page }) => {
-  const endpoint = `**/api/projects/${pid}/config/validate`;
+test("rapid settings changes save in order without reverting newer edits", async ({ page }) => {
+  let saved = structuredClone(globalConfiguration);
+  const revisions: number[] = [];
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
-  await page.route(endpoint, async route => {
-    const { yaml } = route.request().postDataJSON();
-    await gate;
-    await route.fulfill({ json: { ...configuration, yaml, effective: JSON.parse(yaml) } });
+  await page.route("**/api/settings", async route => {
+    if (route.request().method() === "PUT") {
+      const { yaml, revision } = route.request().postDataJSON();
+      revisions.push(revision);
+      if (revisions.length === 1) await gate;
+      expect(revision).toBe(saved.revision);
+      saved = { ...saved, yaml, effective: JSON.parse(yaml), revision: revision + 1 };
+    }
+    await route.fulfill({ json: saved });
   });
-  await page.goto(`/projects/${pid}/settings`);
-  const editor = page.getByRole("textbox", { name: "Advanced YAML configuration", exact: true });
-  const validate = page.getByRole("button", { name: "Validate configuration", exact: true });
-  await expect(editor).toBeEditable();
-  const original = JSON.parse(await editor.inputValue());
-  const draft = JSON.stringify({ ...original, segment: { max_tokens_per_batch: 2700 } });
-  const newer = JSON.stringify({ ...original, segment: { max_tokens_per_batch: 3100 } });
-  await editor.fill(draft);
-  const response = page.waitForResponse(endpoint);
+  await page.goto("/settings/workflow");
+  const polish = page.getByRole("switch", { name: "Polishing", exact: true });
+  const understanding = page.getByRole("switch", { name: "Book understanding", exact: true });
   try {
-    await validate.click();
-    await expect(validate).toHaveAttribute("aria-busy", "true");
-    await editor.fill(newer);
+    await polish.uncheck();
+    await expect.poll(() => revisions).toEqual([globalConfiguration.revision]);
+    await understanding.uncheck();
+    await expect(understanding).not.toBeChecked();
+    expect(revisions).toHaveLength(1);
   } finally {
     release();
   }
-  await response;
-  await expect(validate).not.toHaveAttribute("aria-busy", "true");
-  await expect(editor).toHaveValue(newer);
-  await expect(page.locator('[id="route-translation.body"]')).toBeDisabled();
+  await expect(page.getByText("Global settings saved", { exact: true })).toBeVisible();
+  expect(revisions).toEqual([globalConfiguration.revision, globalConfiguration.revision + 1]);
+  await page.reload();
+  await expect(polish).not.toBeChecked();
+  await expect(understanding).not.toBeChecked();
+});
+
+test("a failed automatic save keeps the edit available for retry", async ({ page }) => {
+  let saved = configuration;
+  let writes = 0;
+  await page.route(`**/api/projects/${pid}/config`, async route => {
+    if (route.request().method() === "PUT") {
+      if (++writes === 1) return route.fulfill({ status: 503, json: { detail: "Try again later" } });
+      const { yaml } = route.request().postDataJSON();
+      saved = { ...saved, yaml, effective: JSON.parse(yaml) };
+    }
+    await route.fulfill({ json: saved });
+  });
+  await page.goto(`/projects/${pid}/settings`);
+  const polish = page.getByRole("switch", { name: "Polishing", exact: true });
+  await polish.uncheck();
+  await expect(page.getByRole("alert")).toContainText("Try again later");
+  await expect(polish).not.toBeChecked();
+  expect(saved.effective.pipeline.polish).toBe(true);
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.getByText("Project settings saved", { exact: true })).toBeVisible();
+  expect(saved.effective.pipeline.polish).toBe(false);
 });
 
 test("idle project settings remain editable after returning from the event log", async ({ page }) => {
@@ -735,8 +749,7 @@ test("idle project settings remain editable after returning from the event log",
   await page.goto(`/projects/${pid}/settings`);
   const polish = page.getByLabel("Polishing", { exact: true });
   const yaml = page.getByRole("textbox", { name: "Advanced YAML configuration", exact: true });
-  const save = page.getByRole("button", { name: "Save configuration", exact: true });
-  await expect(save).toBeEnabled();
+  await expect(polish).toBeEnabled();
   for (let visit = 0; visit < 2; visit++) {
     await page.getByRole("link", { name: "Event log", exact: true }).click();
     await expect(page).toHaveURL(`/projects/${pid}/events`);
@@ -746,12 +759,8 @@ test("idle project settings remain editable after returning from the event log",
     await expect(polish).toBeChecked();
     await expect(yaml).toBeEnabled();
     await expect(yaml).toHaveValue(configuration.yaml);
-    for (const name of ["Save configuration", "Restore defaults", "Validate configuration"]) {
-      await expect(page.getByRole("button", { name, exact: true })).toBeEnabled();
-    }
   }
   await polish.uncheck();
-  await save.click();
   await expect(page.getByText("Project settings saved", { exact: true })).toBeVisible();
   expect(writes).toBe(1);
   expect(saved.effective.pipeline.polish).toBe(false);
@@ -768,9 +777,6 @@ test("running projects keep both basic and advanced settings read-only", async (
   }
   await expect(page.getByLabel("Bilingual order", { exact: true })).toBeDisabled();
   await expect(page.getByRole("textbox", { name: "Advanced YAML configuration", exact: true })).toBeDisabled();
-  for (const name of ["Save configuration", "Restore defaults", "Validate configuration"]) {
-    await expect(page.getByRole("button", { name, exact: true })).toBeDisabled();
-  }
   await expect(page.getByText("Read-only while a task runs", { exact: true })).toHaveCount(0);
 });
 
@@ -840,41 +846,16 @@ for (const chinese of [false, true]) {
   });
 }
 
-test("settings action bars float above the pane bottom throughout scrolling", async ({ page }, testInfo) => {
-  const main = page.getByRole("main");
-  const actions = page.locator('[data-slot="settings.actions"]');
+test("global and project settings have no floating configuration actions", async ({ page }) => {
   for (const path of [
-    "/settings", "/settings/providers", "/settings/defaults", "/settings/advanced",
-    `/projects/${pid}/settings`,
+    "/settings", "/settings/providers", "/settings/defaults", "/settings/workflow", "/settings/pdf",
+    "/settings/advanced", `/projects/${pid}/settings`,
   ]) {
     await page.goto(path);
-    await expect(page.getByRole("button", { name: "Save configuration", exact: true })).toBeEnabled();
-    for (const height of [768, 320]) {
-      await page.setViewportSize({ width: 1024, height });
-      for (const progress of [0, 0.5, 1]) {
-        await main.evaluate((node, progress) => {
-          node.scrollTop = (node.scrollHeight - node.clientHeight) * progress;
-        }, progress);
-        await expect.poll(() => actions.evaluate(node => {
-          const pane = node.closest("main")!.getBoundingClientRect();
-          return pane.bottom - node.getBoundingClientRect().bottom;
-        })).toBeGreaterThanOrEqual(12);
-        await expect.poll(() => actions.evaluate(node => {
-          const pane = node.closest("main")!.getBoundingClientRect();
-          return pane.bottom - node.getBoundingClientRect().bottom;
-        })).toBeLessThanOrEqual(32);
-      }
-      const lastControl = page.locator(
-        '[data-slot="settings.section"] input:visible, [data-slot="settings.section"] textarea:visible, [data-slot="settings.section"] button:visible, [data-slot="settings.section"] summary:visible, [data-slot="page.container"] a:visible',
-      ).last();
-      await expect.poll(async () => {
-        const control = await lastControl.boundingBox();
-        const bar = await actions.boundingBox();
-        return !!control && !!bar && control.y + control.height <= bar.y;
-      }).toBe(true);
-      if (path === "/settings/defaults" && height === 320) {
-        await page.screenshot({ path: testInfo.outputPath("settings-actions-scroll-bottom.png") });
-      }
+    await expect(page.getByRole("main").getByRole("heading", { level: 1 })).toBeVisible();
+    await expect(page.locator('[data-slot="settings.actions"]')).toHaveCount(0);
+    for (const name of ["Save configuration", "Restore defaults", "Validate configuration"]) {
+      await expect(page.getByRole("button", { name, exact: true })).toHaveCount(0);
     }
   }
 });

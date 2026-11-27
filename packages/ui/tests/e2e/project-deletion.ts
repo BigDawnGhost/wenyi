@@ -9,6 +9,22 @@ import { fakeApi, pid, project } from "../../sandbox/fixtures";
 export const desktopHostSensitive = false;
 
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
+  test("the dark delete confirmation has no opaque white highlight", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("wenyi.theme", "dark"));
+    await fakeApi(page, {}, apiOrigin);
+    await page.goto("/");
+    await expect(page.locator("html")).toHaveClass(/\bdark\b/);
+    await page.getByRole("button", { name: `Delete project ${project.name}`, exact: true }).click();
+    const confirm = page.getByRole("dialog", { name: "Delete project" })
+      .getByRole("button", { name: "Delete project", exact: true });
+    await expect(confirm).toBeVisible();
+    await expect(confirm).not.toHaveCSS("box-shadow", /rgba?\(255, 255, 255(?:, 1)?\)/);
+    const restingShadow = await confirm.evaluate(element => getComputedStyle(element).boxShadow);
+    await page.keyboard.press("Tab");
+    await expect(confirm).toBeFocused();
+    await expect(confirm).not.toHaveCSS("box-shadow", restingShadow);
+  });
+
 for (const locale of ["en", "zh-CN"]) {
   test(`permanent project deletion requires confirmation (${locale})`, async ({ page }) => {
     await page.addInitScript((locale) => {
