@@ -258,12 +258,12 @@ def create_context(
             library_root=library_root,
             install_root=install_root,
         )
-    except (RuntimeError, ValueError, sqlite3.Error, SchemaTooNew) as error:
-        # An initialization error is not evidence that an upgrade failed.
-        # Recovery is only ever initiated by a separate explicit offline command.
+    except (catalog.UnsupportedCatalogFormat, SchemaTooNew) as error:
+        # Only a refused stored format can point at an available snapshot.
+        # The separate offline command is still required to restore it.
         if upgrade_recovery_available(workspace, os.environ.get("WENYI_DESKTOP_VERSION")):
             raise StartupFailure(StartupFailureCode.UPGRADE_RECOVERY_REQUIRED) from error
-        if "not a current-format Desktop catalog" in str(error):
+        if isinstance(error, catalog.UnsupportedCatalogFormat):
             raise StartupFailure(StartupFailureCode.LEGACY_CATALOG) from error
         raise
     _report_legacy_data(workspace)

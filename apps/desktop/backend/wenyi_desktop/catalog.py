@@ -13,6 +13,10 @@ _FORMAT_ERROR = (
 )
 
 
+class UnsupportedCatalogFormat(RuntimeError):
+    """The SQLite catalog is not in a format this Desktop engine admits."""
+
+
 def _identity(connection: sqlite3.Connection) -> tuple[int, int]:
     application = connection.execute("PRAGMA application_id").fetchone()[0]
     version = connection.execute("PRAGMA user_version").fetchone()[0]
@@ -24,7 +28,7 @@ def require_current(database: Path) -> None:
     connection = sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True, timeout=5)
     try:
         if _identity(connection) != (APPLICATION_ID, FORMAT_VERSION):
-            raise RuntimeError(_FORMAT_ERROR)
+            raise UnsupportedCatalogFormat(_FORMAT_ERROR)
     finally:
         connection.close()
 
@@ -42,7 +46,7 @@ def initialize(database: Path) -> None:
             "SELECT 1 FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' LIMIT 1"
         ).fetchone()
         if populated or application or version:
-            raise RuntimeError(_FORMAT_ERROR)
+            raise UnsupportedCatalogFormat(_FORMAT_ERROR)
         connection.execute(f"PRAGMA application_id={APPLICATION_ID}")
         connection.execute(f"PRAGMA user_version={FORMAT_VERSION}")
         connection.commit()
