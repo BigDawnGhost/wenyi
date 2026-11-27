@@ -218,19 +218,27 @@ emit both bilingual orders and restore simple annotations with verified offsets.
 Complex link rewrites, nested or stale placements and noncanonical inputs use
 the Python compatibility renderer.
 Large MinerU PDFs are split in a private directory using `pdf/`, with pypdf page
-cloning for unsupported page features. Python reads the Content List V2 result
-ZIPs in chunk order and publishes one `converted.epub`. New runs use the regular
-EPUB reader and writer. The manifest binds the original PDF hash and the derived
-EPUB hash; `fmt` remains `pdf` for the project and its previews. Template-aware
-operations use the derived EPUB, not the uploaded file. Exports never request
-another conversion from MinerU.
+cloning for unsupported page features. Each upload attempt streams from a fresh
+file handle, and result ZIPs stream to the private directory rather than buffering
+whole archives in memory. The directory needs space for all split PDF chunks
+and downloaded ZIPs and is removed when conversion exits. Python reads the
+Content List V2 ZIPs in order, closing each archive after reading its JSON and
+referenced images and before opening the next. The combined markup and image
+resources still accumulate in memory while building `converted.epub`; rendering
+does not have a constant memory bound for the whole book.
+
+New runs use the regular EPUB reader and writer. The manifest binds the original
+PDF hash and the derived EPUB hash; `fmt` remains `pdf` for the project and its
+previews. Template-aware operations use the derived EPUB, not the uploaded
+file. Exports never request another conversion from MinerU.
 
 Core reports MinerU failures using local categories and controlled fields, such
 as the request stage, HTTP status, retry count, or missing field name. Never
 copy service messages, response excerpts, batch IDs, or signed URLs into
 exceptions or logs: task history and live progress reuse the error message.
 HTTP client traces are suppressed only during MinerU requests. Local guidance,
-such as adding an OCR text layer to an image-only PDF, remains visible.
+such as freeing temporary disk space or adding an OCR text layer to an
+image-only PDF, remains visible without exposing local paths.
 
 To inspect an existing MinerU result bundle, use the same renderer offline:
 

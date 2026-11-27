@@ -87,9 +87,16 @@ def test_pdf_uses_ordered_json_and_exports_against_frozen_epub(
             archive.writestr("images/same.gif", image)
         return stream.getvalue()
 
-    def submit(_self, paths):
+    def submit(_self, paths, work_dir):
         submitted.extend(paths)
-        return [bundle("One", GIF), bundle("Two", GIF[:-1] + b"\x00;")]
+        results = []
+        for index, payload in enumerate(
+            (bundle("One", GIF), bundle("Two", GIF[:-1] + b"\x00;")), 1
+        ):
+            path = work_dir / f"result-{index}.zip"
+            path.write_bytes(payload)
+            results.append(path)
+        return results
 
     monkeypatch.setattr(mineru_api.MinerUApi, "submit_batch", submit)
     config = Config.from_dict({"language": {"source": "en", "target": "zh"}})

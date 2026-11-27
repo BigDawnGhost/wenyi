@@ -6,6 +6,7 @@ import logging
 import os
 import re
 from collections.abc import Callable
+from errno import ENOSPC
 from pathlib import Path
 from types import TracebackType
 
@@ -83,7 +84,18 @@ def convert_pdf_to_epub(path: str, output: Path, *, api_token: str, title: str, 
     from .mineru_api import extract_pdf
     from .mineru_epub import render_mineru_results
 
-    render_mineru_results(extract_pdf(path, api_token=api_token), output, title=title, lang=lang)
+    try:
+        with extract_pdf(path, api_token=api_token) as results:
+            render_mineru_results(results, output, title=title, lang=lang)
+    except OSError as error:
+        if error.errno != ENOSPC:
+            raise
+    else:
+        return
+    raise MinerUError(
+        "PDF conversion ran out of temporary disk space. Free up space on the drive used "
+        "for temporary files or the project cache, then retry."
+    ) from None
 
 
 def read_pdf(

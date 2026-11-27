@@ -264,9 +264,13 @@ def _initialize_mineru(pdf_project, monkeypatch):
     result = BytesIO()
     with ZipFile(result, "w") as archive:
         archive.writestr("sample_content_list_v2.json", json.dumps([[paragraph]]))
-    monkeypatch.setattr(
-        "wenyi_core.ingest.mineru_api.MinerUApi.submit_batch", lambda *_: [result.getvalue()]
-    )
+
+    def submit(_self, _paths, work_dir):
+        downloaded = work_dir / "result-1.zip"
+        downloaded.write_bytes(result.getvalue())
+        return [downloaded]
+
+    monkeypatch.setattr("wenyi_core.ingest.mineru_api.MinerUApi.submit_batch", submit)
     monkeypatch.setenv("MINERU_API_KEY", "offline")
     monkeypatch.setattr(
         "wenyi_core.pipeline.prepare.input_preparation.load_document",
