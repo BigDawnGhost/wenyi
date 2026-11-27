@@ -149,6 +149,22 @@ def test_unparseable_config_file_is_not_reported_as_an_upgrade_failure(
     assert "WENYI_FAILED" not in capsys.readouterr().out
 
 
+def test_config_value_error_with_catalog_text_is_not_reported_as_an_upgrade_failure(
+    armed_workspace, tmp_path
+):
+    root, snapshot, _ = armed_workspace
+    malformed = tmp_path / "config.yaml"
+    malformed.write_text(
+        "example: !!int 'not a current-format Desktop catalog'\n", encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="not a current-format Desktop catalog") as caught:
+        main.create_context(root, config_path=str(malformed))
+
+    _assert_plain_startup_failure(caught, snapshot)
+    assert updates.upgrade_recovery_available(root, ENGINE_TARGET)
+
+
 def test_newer_catalog_schema_still_requires_upgrade_recovery(armed_workspace, capsys):
     root, snapshot, database = armed_workspace
     with closing(sqlite3.connect(database)) as connection, connection:
@@ -158,6 +174,7 @@ def test_newer_catalog_schema_still_requires_upgrade_recovery(armed_workspace, c
         main.create_context(root)
 
     assert caught.value.code == StartupFailureCode.UPGRADE_RECOVERY_REQUIRED
+    assert isinstance(caught.value.__cause__, catalog.UnsupportedCatalogFormat)
     # Nothing consumed the prepared snapshot: startup only points at recovery,
     # and the explicit offline command is still the one that runs it.
     assert snapshot.is_dir() and (snapshot / updates.MANIFEST_NAME).is_file()
@@ -219,6 +236,7 @@ def test_old_format_catalog_still_reports_legacy_data(tmp_path, monkeypatch, cap
 
     # A directory-format refusal keeps its own guidance and rewrites nothing.
     assert caught.value.code == StartupFailureCode.LEGACY_CATALOG
+    assert isinstance(caught.value.__cause__, catalog.UnsupportedCatalogFormat)
     assert database.read_bytes() == catalog_bytes
     assert capsys.readouterr().out == ""
 
@@ -240,27 +258,35 @@ def test_old_format_catalog_with_an_armed_snapshot_requires_recovery(armed_works
 
 
 @pytest.mark.parametrize(
-    ("error", "expected"),
-    [
-        (SchemaTooNew("catalog schema 3 is newer than supported schema 2"), True),
-        (RuntimeError(CATALOG_REFUSAL), True),
-        (RuntimeError(f"wrapped: {CATALOG_REFUSAL}"), True),
-        (sqlite3.DatabaseError("file is not a database"), False),
-        (sqlite3.OperationalError("database is locked"), False),
-        (ValueError("configuration file is not valid YAML"), False),
-        (RuntimeError("another engine instance is already running"), False),
-        (FileNotFoundError("config.yaml"), False),
-    ],
-    ids=[
-        "schema-too-new",
-        "catalog-format",
-        "catalog-format-wrapped",
-        "corrupt-database",
-        "engine-lock",
-        "bad-config",
-        "engine-lock-runtime",
-        "missing-config",
-    ],
+    "message", [CATALOG_REFUSAL, f"wrapped: {CATALOG_REFUSAL}"], ids=["exact", "wrapped"]
 )
-def test_is_format_refusal_admits_only_stored_format_refusals(error, expected):
-    assert main._is_format_refusal(error) is expected
+@pytest.mark.parametrize("has_snapshot", [True, False], ids=["with-snapshot", "without-snapshot"])
+def test_untyped_catalog_messages_are_not_classified_as_format_refusals(
+    armed_workspace, monkeypatch, message, has_snapshot
+):
+    root, _, _ = armed_workspace
+    if not has_snapshot:
+        (root / updates.BACKUPS_DIR / updates.ATTEMPT_NAME).unlink()
+    error = RuntimeError(message)
+
+    def fail(self, *args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(main.LocalBackend, "__init__", fail)
+    with pytest.raises(RuntimeError) as caught:
+        main.create_context(root)
+
+    assert caught.value is error
+
+
+def test_writer_catalog_admission_does_not_initialize_an_empty_database(tmp_path):
+    database = tmp_path / "catalog.sqlite3"
+    sqlite3.connect(database).close()
+    before = database.read_bytes()
+
+    with pytest.raises(catalog.UnsupportedCatalogFormat):
+        catalog.require_current(database)
+
+    assert database.read_bytes() == before
+    catalog.initialize(database)
+    catalog.require_current(database)

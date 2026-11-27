@@ -238,25 +238,6 @@ class DesktopServices:
                     await asyncio.gather(*pending, return_exceptions=True)
 
 
-def _is_format_refusal(error: BaseException) -> bool:
-    """Whether the engine refused the stored data format rather than failing to initialize.
-
-    Only a format refusal may be reported as an upgrade problem: it is the one
-    outcome the pre-update snapshot can actually repair. Unrelated construction
-    failures — a corrupt database file, a lock conflict, an unreadable
-    configuration path — do not concern the stored format, so they surface as
-    ordinary startup failures and never point the user at the whole-workspace
-    restore command.
-
-    Both a newer schema and an old-format catalog are refusals of the data on
-    disk, so both stay eligible; the checks after this one decide which of them
-    applies and whether a snapshot exists to roll back to.
-    """
-    if isinstance(error, SchemaTooNew):
-        return True
-    return "not a current-format Desktop catalog" in str(error)
-
-
 def create_context(
     workspace: str | Path,
     *,
@@ -277,16 +258,12 @@ def create_context(
             library_root=library_root,
             install_root=install_root,
         )
-    except (RuntimeError, ValueError, sqlite3.Error, SchemaTooNew) as error:
-        # An initialization error is not evidence that an upgrade failed, and
-        # recovery is only ever initiated by a separate explicit offline command.
-        # The gate therefore opens for a refused stored format alone; anything
-        # else is a startup failure that must keep its own error.
-        if not _is_format_refusal(error):
-            raise
+    except (catalog.UnsupportedCatalogFormat, SchemaTooNew) as error:
+        # Only a refused stored format can point at an available snapshot.
+        # The separate offline command is still required to restore it.
         if upgrade_recovery_available(workspace, os.environ.get("WENYI_DESKTOP_VERSION")):
             raise StartupFailure(StartupFailureCode.UPGRADE_RECOVERY_REQUIRED) from error
-        if "not a current-format Desktop catalog" in str(error):
+        if isinstance(error, catalog.UnsupportedCatalogFormat):
             raise StartupFailure(StartupFailureCode.LEGACY_CATALOG) from error
         raise
     _report_legacy_data(workspace)
