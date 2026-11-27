@@ -126,12 +126,12 @@ export function TermTable({
                   />
                 </td>
                 <td className="px-4 py-3.5 font-medium">
-                  <span className="block truncate" title={t.source}>
+                  <span className="block select-text truncate" title={t.source}>
                     {t.source}
                   </span>
                 </td>
                 <td className="px-4 py-3.5">
-                  <span className="block truncate" title={t.target}>
+                  <span className="block select-text truncate" title={t.target}>
                     {t.target}
                   </span>
                 </td>

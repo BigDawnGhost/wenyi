@@ -4,6 +4,7 @@ import json
 import os
 import queue
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -95,7 +96,16 @@ def test_pause_and_close_kill_the_model_writer_without_waiting(tmp_path, monkeyp
                     detail = client.get(root + "/review/runs/" + runs[0]["id"]).json()
                     assert detail["result"]["status"] == detail["status"] == "paused"
                     assert detail["result"]["workflow_run_id"] == preparing.json()["job_id"]
-                    events = client.get(root + "/events", params={"type": "task_paused"}).json()
+                    # The supervisor commits the catalog status before logging the stop
+                    # in the project store. Observing "paused" does not fence that write.
+                    deadline = time.monotonic() + 5
+                    while True:
+                        response = client.get(root + "/events", params={"type": "task_paused"})
+                        assert response.status_code == 200
+                        events = response.json()
+                        if events or time.monotonic() >= deadline:
+                            break
+                        time.sleep(0.01)
                     assert [e["payload"]["run_id"] for e in events] == [preparing.json()["job_id"]]
 
                 resumed = client.post(root + "/resume")

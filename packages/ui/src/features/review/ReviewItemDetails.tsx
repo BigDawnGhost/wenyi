@@ -33,7 +33,7 @@ export function ReviewItemDetails({
         </section>
       )}
       {item.suggestion && (
-        <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+        <p className="select-text whitespace-pre-wrap [overflow-wrap:anywhere]">
           {item.suggestion}
         </p>
       )}
@@ -43,7 +43,7 @@ export function ReviewItemDetails({
           {item.changes.map((change, index) => (
             <p
               key={index}
-              className="rounded-md bg-surface p-3 whitespace-pre-wrap [overflow-wrap:anywhere]"
+              className="select-text rounded-md bg-surface p-3 whitespace-pre-wrap [overflow-wrap:anywhere]"
             >
               {text(change.suggested_target) || t("review.emptyTranslation")}
             </p>
@@ -160,7 +160,7 @@ function TextBlock({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0 space-y-1">
       <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere]">
+      <p className="select-text whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere]">
         {value || t("review.emptyTranslation")}
       </p>
     </div>

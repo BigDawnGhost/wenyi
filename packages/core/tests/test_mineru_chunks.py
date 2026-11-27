@@ -6,6 +6,7 @@ import pytest
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import NameObject, TextStringObject
 from wenyi_core.ingest import mineru_api
+from wenyi_core.models.errors import MinerUError
 
 from tests.pdf_fixtures import pdf_bytes
 
@@ -57,14 +58,38 @@ def test_failed_upload_removes_partial_chunks_only(tmp_path, monkeypatch):
     out.write_text("keep", encoding="utf-8")
     seen = []
 
-    def fail_upload(self, names):
+    def fail_upload(self, names, work_dir):
         seen.extend(map(Path, names))
         assert all(path.exists() for path in seen)
+        assert all(path.parent == work_dir for path in seen)
         raise OSError("upload interrupted")
 
     monkeypatch.setattr(mineru_api, "MAX_PAGES", 1)
     monkeypatch.setattr(mineru_api.MinerUApi, "submit_batch", fail_upload)
     with pytest.raises(OSError, match="interrupted"):
-        mineru_api.extract_pdf(str(source), api_token="synthetic")
+        with mineru_api.extract_pdf(str(source), api_token="synthetic"):
+            pytest.fail("an interrupted upload must not yield results")
     assert len(seen) == 2 and all(not path.parent.exists() for path in seen)
     assert out.read_text(encoding="utf-8") == "keep" and source.exists()
+
+
+def test_interrupted_download_removes_the_private_work_directory(tmp_path, monkeypatch):
+    source, out = tmp_path / "input.pdf", tmp_path / "existing.epub"
+    source.write_bytes(pdf_bytes(["one", "two"]))
+    out.write_text("keep", encoding="utf-8")
+    partial_results = []
+
+    def fail_download(self, names, work_dir):
+        partial = work_dir / "result-1.zip"
+        partial.write_bytes(b"partial result ZIP")
+        partial_results.append(partial)
+        raise MinerUError("MinerU download failed: timeout")
+
+    monkeypatch.setattr(mineru_api, "MAX_PAGES", 1)
+    monkeypatch.setattr(mineru_api.MinerUApi, "submit_batch", fail_download)
+    with pytest.raises(MinerUError, match="download failed"):
+        with mineru_api.extract_pdf(str(source), api_token="synthetic"):
+            pytest.fail("an interrupted download must not yield results")
+    assert [path.name for path in partial_results] == ["result-1.zip"]
+    assert all(not path.exists() and not path.parent.exists() for path in partial_results)
+    assert out.read_text(encoding="utf-8") == "keep" and not list(tmp_path.glob("*.zip"))
