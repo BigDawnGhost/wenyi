@@ -522,3 +522,4 @@ class WorkflowOut(BaseModel):
     review_id: str | None = None
     stages: list[WorkflowStage]
     progress: dict | None = None
+    progress_quiet: bool = False

@@ -223,31 +223,26 @@ def test_parse_completion_waits_for_run_lock_release(desktop, monkeypatch):
 
 
 @pytest.mark.parametrize("status", ["error", "paused"])
-def test_terminal_failure_status_waits_for_run_lock_release(desktop_context, monkeypatch, status):
+def test_terminal_failure_rolls_back_both_catalog_rows(desktop_context, monkeypatch, status):
     pid = current_context().repository.create_project("Completion", "en", "zh", {})
     job = current_context().repository.create_job(
         pid, "translation", "terminal-run", run_id="terminal-run", status="running"
     )
     current_context().repository.set_project_status(pid, "translating")
-    storage_lock = SqliteStorage.lock
-    statuses_at_release = []
-
-    @contextmanager
-    def observe_lock_exit(storage, blocking=True):
-        with storage_lock(storage, blocking=blocking):
-            try:
-                yield
-            finally:
-                released_job = current_context().repository.get_job(job)
-                assert released_job is not None
-                statuses_at_release.append(released_job["status"])
-
-    monkeypatch.setattr(SqliteStorage, "lock", observe_lock_exit)
     request = ExecutionRequest("translation", pid, "terminal-run")
     dependencies = workflow_dependencies(desktop_context)
-    runner.record_terminal_status(request, dependencies, RuntimeError("Stopped"), status=status)
+    outcome = runner.WorkflowOutcome(status, error=RuntimeError("Stopped"))
+    with monkeypatch.context() as patch:
 
-    assert statuses_at_release == ["running"]
+        def fail(*args, **kwargs):
+            raise OSError("catalog write failed")
+
+        patch.setattr(desktop_context.repository, "update_project", fail)
+        with pytest.raises(OSError, match="catalog write failed"):
+            runner.record_terminal_status(request, dependencies, outcome)
+    assert desktop_context.repository.get_job(job)["status"] == "running"
+    assert desktop_context.repository.get_project(pid)["status"] == "translating"
+    assert runner.record_terminal_status(request, dependencies, outcome) == outcome
     terminal_job = current_context().repository.get_job(job)
     assert terminal_job is not None
     assert terminal_job["status"] == status
@@ -256,8 +251,7 @@ def test_terminal_failure_status_waits_for_run_lock_release(desktop_context, mon
     assert project is not None
     assert project["status"] == status
 
-    runner.record_terminal_status(request, dependencies, RuntimeError("Stopped"), status=status)
-    assert statuses_at_release == ["running"]
+    assert runner.record_terminal_status(request, dependencies, outcome) is None
 
 
 def test_late_terminal_status_updates_only_its_own_job(desktop_context):
@@ -273,7 +267,7 @@ def test_late_terminal_status_updates_only_its_own_job(desktop_context):
     runner.record_terminal_status(
         ExecutionRequest("translation", pid, "old-run"),
         workflow_dependencies(desktop_context),
-        RuntimeError("Old failure"),
+        runner.WorkflowOutcome("error", error=RuntimeError("Old failure")),
     )
 
     old_job = current_context().repository.get_job(old)
@@ -298,12 +292,12 @@ def test_terminal_status_survives_unavailable_storage(desktop_context, monkeypat
         raise OSError("Storage unavailable")
 
     dependencies = replace(workflow_dependencies(desktop_context), storage_for=unavailable)
-    with pytest.raises(OSError, match="Storage unavailable"):
-        runner.record_terminal_status(
-            ExecutionRequest("translation", pid, "failed-run"),
-            dependencies,
-            RuntimeError("Worker failed"),
-        )
+    runner.record_terminal_status(
+        ExecutionRequest("translation", pid, "failed-run"),
+        dependencies,
+        runner.WorkflowOutcome("error", error=RuntimeError("Worker failed")),
+    )
+    assert desktop_context.repository.get_project(pid)["status"] == "error"
 
     failed_job = current_context().repository.get_job(job)
     assert failed_job is not None

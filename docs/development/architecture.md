@@ -143,11 +143,14 @@ Backup locations and user-visible fallback behavior are documented in the
 
 ## Execution and publication
 
-The workflow runner owns durable job rechecks, cancellation and resource cleanup. Its
-run lock covers recovery and domain work. The synchronous writer returns only after
-checkpoint writes, live statistics and storage cleanup; then the runner rechecks run
-identity and publishes the catalog outcome. See the [shared cancellation contract](web.md#workflow-cancellation)
-for how cancellation retains scheduler ownership.
+The supervisor claims a durable run before starting its writer, so a duplicate
+delivery cannot stop or replace that writer. The project run lock covers recovery and
+domain work. Before unlocking, the writer records its outcome on the running job.
+After exit, the supervisor commits job and project status in one catalog transaction,
+updating the project only for its latest workflow. This does not require opening
+the project directory. Recovery uses the same transaction and honors a recorded outcome. See the
+[shared cancellation contract](web.md#workflow-cancellation) for how committed
+checkpoints survive a forced stop.
 
 Export coordination holds one export lock through claim, render and publication; rendering
 never publishes. The catalog commits the published artifact and its job's successful

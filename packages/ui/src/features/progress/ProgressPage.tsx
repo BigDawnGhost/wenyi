@@ -52,7 +52,7 @@ export default function ProgressPage() {
       invalidate();
       toast.success(
         kind === "pause"
-          ? tr("progress.pauseRequestedSavingCompletedWork")
+          ? tr("progress.pauseRequested")
           : tr("progress.taskSubmitted"),
       );
     },

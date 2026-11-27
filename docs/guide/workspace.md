@@ -41,9 +41,11 @@ New and resumed tasks use saved settings; active tasks keep their captured confi
 
 Start translation from the project overview. **Current workflow** shows the actual task type, status, and last reported stage. Saved paragraph counts, chapters, usage, and running time update as work progresses. Model usage appears after the provider reports it; unknown counters show `—`, not zero, and token counts are not an invoice.
 
-Use **Pause** for the current queued/running task and wait until it is paused before editing. **Pausing is a safe-boundary stop, not an instant undo or a guarantee that an in-flight provider request is unbilled.** Wenyi stops work at supported cancellation/checkpoint boundaries and retains committed progress. If the task has already completed or a newer run has replaced it, refresh instead of repeatedly pausing the old run.
+Use **Pause** to stop the current workflow, then wait for **Paused** before editing or resuming. Pausing or exiting the engine does not wait for the current batch to finish or save again. **Committed progress is kept; unfinished work may need to run again, and the provider may still bill a request already sent.** If a running task goes two minutes without a stage update, the overview links to the event log. A slow step may still be working; the warning does not stop or restart it.
 
 Use **Resume** to continue the actual interrupted task type, including preparation or Review, rather than starting the book over. Completed checkpoints are reused; work not committed before interruption may need to run again. A failed task shows its reason in the project's overview: correct the problem, then resume. Failed exports are retried by creating a new export.
+
+A queued workflow can be paused before a worker is free. Resuming submits a new run; the old queue entry cannot restart the paused work.
 
 While work is queued, running, or stopping, project configuration, paragraphs, titles, glossary, and analysis are read-only. Reading and copying remain available. Conflicting starts or edits are rejected; saved-snapshot exports can run alongside translation. If another client changed an idle project, reopen or refresh it to load the latest state without treating an old page as authoritative.
 

@@ -46,6 +46,7 @@ class PostgresRepository:
     get_job = staticmethod(dal.get_job)
     get_job_by_arq_id = staticmethod(dal.get_job_by_arq_id)
     set_job_status = staticmethod(dal.set_job_status)
+    finish_workflow = staticmethod(dal.finish_workflow)
     list_jobs = staticmethod(dal.list_jobs)
     latest_workflow_job = staticmethod(dal.latest_workflow_job)
     latest_resumable_job = staticmethod(dal.latest_resumable_job)
@@ -64,8 +65,12 @@ class PostgresRepository:
             raise RuntimeError("Web database pool has not started")
         return self._pool
 
-    def start(self):
-        self._pool = init_pool(self.settings.psycopg_dsn, max_size=self.settings.db_pool_max_size)
+    def start(self, *, migrate: bool = True):
+        self._pool = init_pool(
+            self.settings.psycopg_dsn, max_size=self.settings.db_pool_max_size, migrate=migrate
+        )
+        if not migrate:
+            return
         try:
             from .config_rebuild import rebuild_saved_settings
 
@@ -141,9 +146,15 @@ class PostgresRepository:
 
     def fail_admission(self, job_id, status, error):
         job = dal.get_job(job_id)
-        dal.set_job_status(job_id, "error", error=error)
         if job:
-            dal.set_project_status(job["project_id"], status)
+            self.finish_workflow(
+                job["project_id"],
+                job_id,
+                "error",
+                expected_status="queued",
+                project_status=status,
+                error=error,
+            )
 
     def update_term(self, pid, storage, source, term):
         with self.pool.connection() as conn:

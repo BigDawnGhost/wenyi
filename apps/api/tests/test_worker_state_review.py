@@ -261,6 +261,32 @@ def test_export_recovery_marks_orphan_error_without_changing_project(recovery_st
     assert must(dal.get_project(storage.project_id))["status"] == "translating"
 
 
+def test_recovery_preserves_writer_outcome_before_supervisor_publication(recovery_state, pg_pool):
+    storage, recovery = recovery_state
+    pid = storage.project_id
+    job_id = dal.create_job(pid, "parse", "handoff", run_id="handoff", status="running")
+    dal.set_project_status(pid, "parsing")
+    request = ExecutionRequest("parse", pid, "handoff")
+    deps = replace(
+        bindings.workflow_dependencies(current_context()), operation=lambda *_: "uploaded"
+    )
+    # The writer has returned and released the lock; its supervisor hasn't run yet.
+    assert runner.execute(request, deps, preclaimed=True) == runner.WorkflowOutcome(
+        "done", project_status="uploaded"
+    )
+    assert must(dal.get_job(job_id))["status"] == "running"
+    with pg_pool.connection() as conn:
+        conn.execute("UPDATE jobs SET updated_at=now()-interval '3 minutes' WHERE id=%s", (job_id,))
+    asyncio.run(recovery.recover_jobs({"redis": None}))
+    assert must(dal.get_job(job_id))["status"] == "done"
+    assert must(dal.get_project(pid))["status"] == "uploaded"
+    assert not storage.list_events(event_type="task_interrupted")
+    # A late shutdown/abnormal-exit notification cannot overwrite the recovered success.
+    runner.publish_outcome(request, deps, runner.WorkflowOutcome("interrupted", "paused"))
+    assert must(dal.get_job(job_id))["status"] == "done"
+    assert must(dal.get_project(pid))["status"] == "uploaded"
+
+
 def test_export_lock_excludes_recovery_but_not_other_exports_or_translation(
     recovery_state, pg_pool
 ):
@@ -344,7 +370,7 @@ def test_failure_does_not_leave_project_busy_when_api_briefly_owns_lock(worker_s
     runner.record_terminal_status(
         ExecutionRequest("translation", pid, "failed-between-locks"),
         bindings.workflow_dependencies(current_context()),
-        RuntimeError("worker failed"),
+        runner.WorkflowOutcome("error", error=RuntimeError("worker failed")),
     )
     thread.join(2)
     assert must(dal.get_job(job))["status"] == "error"

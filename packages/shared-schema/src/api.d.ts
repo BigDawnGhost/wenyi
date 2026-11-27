@@ -2037,6 +2037,11 @@ export interface components {
             progress?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Progress Quiet
+             * @default false
+             */
+            progress_quiet: boolean;
         };
         /** WorkflowStage */
         WorkflowStage: {
