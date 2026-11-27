@@ -18,11 +18,11 @@ def test_pause_requires_an_active_matching_job(api, status):
     pid = dal.create_project("Pause identity", "en", "zh", {})
     dal.create_job(pid, "translation", pid, run_id=pid, status=status)
     dal.set_project_status(pid, "translating")
-    active = status in {"queued", "running"}
-    assert dal.request_pause(pid, pid) is active
+    expected = {"queued": "paused", "running": "pausing"}.get(status)
+    assert dal.request_pause(pid, pid) == expected
     project = dal.get_project(pid)
     assert project is not None
-    assert project["status"] == ("pausing" if active else "translating")
+    assert project["status"] == (expected or "translating")
 
 
 def test_pause_rechecks_completion_and_new_run(api, monkeypatch):
@@ -52,8 +52,26 @@ def test_pause_rechecks_completion_and_new_run(api, monkeypatch):
     project = dal.get_project(pid)
     assert project is not None
     assert project["status"] == "translating"
-    assert dal.request_pause(pid, new_run)
-    assert dal.request_pause(pid, new_run)
+    assert dal.request_pause(pid, new_run) == "paused"
+    assert dal.request_pause(pid, new_run) is None
+
+
+def test_workflow_completion_rolls_back_both_rows(api, monkeypatch):
+    pid = dal.create_project("Completion", "en", "zh", {})
+    job = dal.create_job(pid, "translation", pid, run_id=pid, status="running")
+    dal.set_project_status(pid, "translating")
+
+    def fail(*args, **kwargs):
+        raise OSError("catalog write failed")
+
+    monkeypatch.setattr(dal, "set_project_status", fail)
+    with pytest.raises(OSError, match="catalog write failed"):
+        dal.finish_workflow(
+            pid, job, "paused", expected_status="running", project_status="paused", error=None
+        )
+    job_row, project = dal.get_job(job), dal.get_project(pid)
+    assert job_row is not None and job_row["status"] == "running"
+    assert project is not None and project["status"] == "translating"
 
 
 @pytest.fixture

@@ -40,7 +40,7 @@ Open **Settings → Models & connections**, add or edit a provider, and enter it
 
 Wenyi does not write secrets to YAML/JSON, SQLite, project files, browser storage, or logs. Project backups contain credential references, not the secrets held by the system vault or session memory.
 
-For model registration, fetching names, and **Test connection**, see [Choose models and workflow](workspace.md#choose-models-and-workflow). Fetching names uses no model tokens; **Test connection sends live, potentially billable model requests**. **Validate configuration** checks the current draft without sending a model request.
+For model registration, fetching names, and **Test connection**, see [Choose models and workflow](workspace.md#choose-models-and-workflow). Fetching names uses no model tokens; **Test connection sends live, potentially billable model requests**.
 
 ### MinerU PDF parsing key
 

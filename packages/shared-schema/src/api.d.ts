@@ -430,6 +430,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/models/ping/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ping Draft
+         * @description Test the current editor draft without updating the registry or credential store.
+         */
+        post: operations["ping_draft_settings_models_ping_draft_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings/models/list": {
         parameters: {
             query?: never;
@@ -2017,6 +2037,11 @@ export interface components {
             progress?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Progress Quiet
+             * @default false
+             */
+            progress_quiet: boolean;
         };
         /** WorkflowStage */
         WorkflowStage: {
@@ -2858,6 +2883,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ping_draft_settings_models_ping_draft_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Connection */
+                    connection?: string | null;
+                    /** Draft Id */
+                    draft_id: string;
+                    /** Provider */
+                    provider: {
+                        [key: string]: unknown;
+                    };
+                    /** Models */
+                    models: {
+                        [key: string]: {
+                            [key: string]: unknown;
+                        };
+                    };
+                    /** Api Key */
+                    api_key?: string | null;
+                    /**
+                     * Timeout
+                     * @default 30
+                     */
+                    timeout?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelPingResult"][];
                 };
             };
         };

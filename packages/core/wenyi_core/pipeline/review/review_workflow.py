@@ -39,8 +39,9 @@ if TYPE_CHECKING:
 class ReviewService:
     """Domain service for read-only whole-book agent review."""
 
-    def __init__(self, runtime: PipelineRuntime):
+    def __init__(self, runtime: PipelineRuntime, *, workflow_run_id: str | None = None):
         self._runtime = runtime
+        self._workflow_run_id = workflow_run_id
         self._chunks = ReviewChunkService(runtime.config, runtime.client, runtime.reviewer)
         self._rounds = ReviewRoundService(
             runtime.config, runtime.client, runtime.analyzer.style_brief, self._chunks
@@ -213,6 +214,7 @@ class ReviewService:
             debug = ReviewRunStore(store.run_dir, storage=store)
         debug.start(
             reviewed_content_digest=reviewed_content_digest,
+            workflow_run_id=self._workflow_run_id,
             metadata={
                 "source_sha256": manifest.get("source_sha256"),
                 "title": manifest.get("title"),

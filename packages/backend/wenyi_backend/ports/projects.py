@@ -1,6 +1,6 @@
 """Project identity and workflow state needed by execution services."""
 
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 RUNNING_PROJECT_STATUSES = frozenset(
     {"preparing", "translating", "reviewing", "parsing", "pausing"}
@@ -20,7 +20,7 @@ class ProjectQueries(ProjectReader, Protocol):
 class ProjectRepository(ProjectReader, Protocol):
     def set_project_status(self, pid: str, status: str, *, error: str | None = None) -> None: ...
     def is_paused(self, pid: str) -> bool: ...
-    def request_pause(self, pid: str, run_id: str) -> bool:
+    def request_pause(self, pid: str, run_id: str) -> Literal["paused", "pausing"] | None:
         """Pause only the latest active workflow, atomically with its project-state check."""
         ...
 

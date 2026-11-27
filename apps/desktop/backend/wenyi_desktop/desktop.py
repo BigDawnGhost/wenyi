@@ -9,8 +9,9 @@ import os
 import socket
 import sys
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from .diagnostics import (
     EngineDiagnostics,
@@ -21,9 +22,6 @@ from .diagnostics import (
     write_protocol,
 )
 from .ownership import NativeOwner, profile_lock
-
-if TYPE_CHECKING:
-    import uvicorn
 
 ORIGINS = (
     "tauri://localhost",
@@ -149,7 +147,7 @@ class LocalBoundary:
         await self.app(scope, receive, send)
 
 
-def watch_parent(server: uvicorn.Server) -> None:
+def watch_parent(shutdown: Callable[[], None]) -> None:
     """A closed pipe also handles abrupt parent termination without polling."""
     for line in sys.stdin:
         try:
@@ -158,9 +156,9 @@ def watch_parent(server: uvicorn.Server) -> None:
         except (ValueError, TypeError):
             # Only a well-formed shutdown command matters; ignore the rest.
             continue
-    server.should_exit = True
+    shutdown()
     # EOF means the owner may already be gone and cannot enforce its own deadline.
-    # Let lifespan flush checkpoints first, but do not leave an orphan on a hung call.
+    # Do not leave an orphan if shutdown cannot finish.
     watchdog = threading.Timer(30, lambda: os._exit(1))
     watchdog.daemon = True
     watchdog.start()
@@ -185,6 +183,7 @@ async def serve(
             diagnostics=lifecycle.reporter,
             engine_diagnostics=lifecycle,
             install_root=install_root,
+            isolate_workflows=True,
         )
     retention = None
     try:
@@ -204,7 +203,16 @@ async def serve(
                     timeout_graceful_shutdown=25,
                 )
                 server = uvicorn.Server(config)
-                threading.Thread(target=watch_parent, args=(server,), daemon=True).start()
+                loop = asyncio.get_running_loop()
+
+                def begin_shutdown() -> None:
+                    server.should_exit = True
+                    app.state.backend.telemetry.begin_shutdown()
+
+                def request_shutdown() -> None:
+                    loop.call_soon_threadsafe(begin_shutdown)
+
+                threading.Thread(target=watch_parent, args=(request_shutdown,), daemon=True).start()
                 task = asyncio.create_task(server.serve(sockets=[listener]))
                 while not server.started and not task.done():
                     await asyncio.sleep(0.01)
@@ -237,6 +245,14 @@ async def serve(
 
 
 def main() -> None:
+    if sys.argv[1:] == ["--workflow-child"]:
+        from wenyi_backend.execution.process import run_child
+
+        from .workflow_child import execute
+
+        run_child(execute)
+        return
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=None)
     parser.add_argument("--native-startup", action="store_true", help=argparse.SUPPRESS)

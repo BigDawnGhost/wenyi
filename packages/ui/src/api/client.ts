@@ -5,7 +5,7 @@ import type {
   ChapterSegments, SegmentRevision, PrecisionDrafts, Term, TermPage, Conflict,
   ChapterWindow, ReaderSegment, ParagraphUpdate,
   StrategyTemplate, ExportOut, EventOut, JobEnqueued, Capabilities, GlobalConfig,
-  GlobalConfigInput, ModelPingResult, ModelListResult, ModelListRequest,
+  GlobalConfigInput, DraftModelPingRequest, ModelPingResult, ModelListResult, ModelListRequest,
   ProjectConfig, ReviewRun, UploadPreview, AnalysisPayload,
   GlossaryExportFormat,
 } from "./types";
@@ -17,27 +17,19 @@ export const setAuthToken = (token: string | null) => platform().setAuthToken(to
 
 // API calls.
 export const api = {
-  getGlobalDefaults: () => request<GlobalConfig>("/settings/defaults"),
-  getProjectDefaults: (pid: string) =>
-    request<ProjectConfig>(`/projects/${pid}/config/defaults`),
   getGlobalConfig: () => request<GlobalConfig>("/settings"),
   saveGlobalConfig: (body: GlobalConfigInput) =>
     request<GlobalConfig>("/settings", {
       method: "PUT",
       body: JSON.stringify(body),
     }),
-  pingModels: (connection: string) =>
-    request<ModelPingResult[]>("/settings/models/ping", {
-      method: "POST",
-      body: JSON.stringify({ connection }),
-    }),
-  listModels: (body: ModelListRequest) =>
-    request<ModelListResult>("/settings/models/list", {
+  pingDraftModels: (body: DraftModelPingRequest) =>
+    request<ModelPingResult[]>("/settings/models/ping/draft", {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  validateGlobalConfig: (body: GlobalConfigInput) =>
-    request<GlobalConfig>("/settings/validate", {
+  listModels: (body: ModelListRequest) =>
+    request<ModelListResult>("/settings/models/list", {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -50,11 +42,6 @@ export const api = {
   saveConfig: (pid: string, yaml: string) =>
     request<ProjectConfig>(`/projects/${pid}/config`, {
       method: "PUT",
-      body: JSON.stringify({ yaml }),
-    }),
-  validateConfig: (pid: string, yaml: string) =>
-    request<ProjectConfig>(`/projects/${pid}/config/validate`, {
-      method: "POST",
       body: JSON.stringify({ yaml }),
     }),
   modelRoutes: (pid: string) => request<unknown>(`/projects/${pid}/models`),
