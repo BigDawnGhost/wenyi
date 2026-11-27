@@ -52,12 +52,14 @@ export function ContentsList({
                   paddingInlineStart: `${Math.min(Math.max(entry.depth, 0), 6) * 12}px`,
                 }}
               >
-                <p>{entry.title || t("common.untitledChapter")}</p>
+                <p className={entry.title ? "select-text" : undefined}>
+                  {entry.title || t("common.untitledChapter")}
+                </p>
               </div>
               <div className="min-w-0 [overflow-wrap:anywhere]">
                 <p
                   className={
-                    entry.title_translated ? undefined : "text-muted-foreground"
+                    entry.title_translated ? "select-text" : "text-muted-foreground"
                   }
                 >
                   {entry.title_translated || t("contents.notTranslated")}

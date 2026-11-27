@@ -64,7 +64,7 @@ export function PrecisionDrafts({
       </div>
     );
   const text = (value: string | null | undefined) => (
-    <p lang={value ? language : undefined} className={cn("whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]", bookTextFont(value))}>
+    <p lang={value ? language : undefined} className={cn("select-text whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]", bookTextFont(value))}>
       {value === ""
         ? t("review.emptyTranslation")
         : value ?? t("proofreading.waitingForTranslation")}

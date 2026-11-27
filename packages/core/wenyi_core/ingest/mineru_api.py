@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 import tempfile
 import time
+from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Literal
+from typing import BinaryIO, Literal
 
 import httpx
 from pypdf import PdfReader, PdfWriter
@@ -57,6 +58,24 @@ def _private_http():
         _private_request.reset(scope)
 
 
+def _classify(response: httpx.Response) -> tuple[str, bool]:
+    """Return a safe failure reason and whether the call may be retried."""
+    status = response.status_code
+    if type(status) is not int or not 100 <= status < 600:
+        return "invalid HTTP status", False
+    if 200 <= status < 300:
+        return "", False
+    return f"HTTP {status}", status == 429 or status >= 500
+
+
+def _receive(response: httpx.Response, sink: BinaryIO) -> None:
+    """Write a streamed body from the start of ``sink`` in bounded chunks."""
+    sink.seek(0)
+    sink.truncate()
+    for chunk in response.iter_bytes():
+        sink.write(chunk)
+
+
 def _request_with_retry(
     client: httpx.Client | None,
     method: str,
@@ -64,20 +83,38 @@ def _request_with_retry(
     *,
     operation: _Operation,
     timeout: httpx.Timeout | None = None,
+    body: Callable[[], BinaryIO] | None = None,
+    sink: BinaryIO | None = None,
     **kwargs,
 ) -> httpx.Response:
     """Return a successful response, or report the stage and a safe failure reason.
 
     ``client=None`` keeps API authorization out of pre-signed object requests.
+    ``body`` opens a fresh upload stream for every attempt, so a retried upload never
+    replays a consumed handle. ``sink`` receives a streamed response body instead of
+    buffering it; it is rewound at the start of every attempt, so an interrupted
+    transfer restarts from the beginning of the same destination file.
     """
     sender = client.request if client is not None else httpx.request
+    opener = client.stream if client is not None else httpx.stream
     if timeout is not None:
         kwargs["timeout"] = timeout
     for attempt in range(1, _TRANSIENT_ATTEMPTS + 1):
         retry = False
+        handle = body() if body is not None else None
+        if handle is not None:
+            kwargs["content"] = handle
         try:
             with _private_http():
-                response = sender(method, url, **kwargs)
+                if sink is None:
+                    response = sender(method, url, **kwargs)
+                    reason, retry = _classify(response)
+                else:
+                    with opener(method, url, **kwargs) as response:
+                        reason, retry = _classify(response)
+                        if not reason:
+                            _receive(response, sink)
+                            return response
         except (httpx.InvalidURL, httpx.LocalProtocolError, httpx.UnsupportedProtocol):
             reason = "invalid HTTP request"
         except httpx.TooManyRedirects:
@@ -88,17 +125,18 @@ def _request_with_retry(
             reason, retry = "timeout", True
         except httpx.TransportError:
             reason, retry = "transport failure", True
+        except OSError:
+            # A streaming destination is local storage: report a write failure plainly
+            # instead of describing it as an HTTP problem.
+            raise
         except Exception:
             reason = "HTTP client failure"
         else:
-            status = response.status_code
-            if type(status) is not int or not 100 <= status < 600:
-                reason = "invalid HTTP status"
-            elif 200 <= status < 300:
+            if not reason:
                 return response
-            else:
-                reason = f"HTTP {status}"
-                retry = status == 429 or status >= 500
+        finally:
+            if handle is not None:
+                handle.close()
         if not retry or attempt == _TRANSIENT_ATTEMPTS:
             break
         _sleep(_RETRY_BACKOFF_SECONDS * attempt)
@@ -142,8 +180,10 @@ class MinerUApi:
             return
         raise MinerUError("MinerU HTTP client cleanup failed.") from None
 
-    def submit_batch(self, file_paths: list[str], timeout: int = MAX_WAIT_PER_TASK) -> list[bytes]:
-        """Upload files, wait for extraction, return list of ZIP bytes in order."""
+    def submit_batch(
+        self, file_paths: list[str], work_dir: Path, timeout: int = MAX_WAIT_PER_TASK
+    ) -> list[Path]:
+        """Upload files, wait for extraction, return the downloaded ZIPs in order."""
         # 1. Request pre-signed upload URLs
         expected_names = [Path(p).name for p in file_paths]
         resp = _request_with_retry(
@@ -182,13 +222,15 @@ class MinerUApi:
                 upload_url,
                 operation="upload",
                 timeout=httpx.Timeout(120.0),
-                content=Path(local_path).read_bytes(),
+                body=lambda path=local_path: Path(path).open("rb"),
             )
 
         # 3. Poll until all done, matching results back to the upload manifest by name
-        return self._poll_batch(batch_id, timeout, expected_names=expected_names)
+        return self._poll_batch(batch_id, timeout, expected_names=expected_names, work_dir=work_dir)
 
-    def _poll_batch(self, batch_id: str, timeout: int, *, expected_names: list[str]) -> list[bytes]:
+    def _poll_batch(
+        self, batch_id: str, timeout: int, *, expected_names: list[str], work_dir: Path
+    ) -> list[Path]:
         deadline = time.monotonic() + timeout
         interval = POLL_INTERVAL
         while True:
@@ -219,7 +261,7 @@ class MinerUApi:
                     by_name[name] = result
                 if not all(name in by_name for name in expected_names):
                     raise MinerUError("MinerU polling results do not match the uploaded files")
-                zips: list[bytes] = []
+                zips: list[Path] = []
                 for index, name in enumerate(expected_names, 1):
                     r = by_name[name]
                     if r["state"] == "failed":
@@ -230,23 +272,26 @@ class MinerUApi:
                             f"MinerU polling result for file {index} is missing 'full_zip_url' "
                             "or it is invalid"
                         )
-                    zips.append(self._download_zip(zip_url))
+                    zips.append(self._download_zip(zip_url, work_dir / f"result-{index}.zip"))
                 return zips
             if time.monotonic() > deadline:
                 raise MinerUTimeoutError("MinerU polling timed out")
             time.sleep(min(interval, max(0, deadline - time.monotonic())))
             interval = min(interval * 1.5, 30.0)
 
-    def _download_zip(self, zip_url: str) -> bytes:
-        resp = _request_with_retry(
-            None,
-            "GET",
-            zip_url,
-            operation="download",
-            timeout=httpx.Timeout(30.0, read=300.0),
-            follow_redirects=True,
-        )
-        return resp.content
+    def _download_zip(self, zip_url: str, destination: Path) -> Path:
+        """Stream one result ZIP into ``destination`` instead of returning its bytes."""
+        with destination.open("wb") as sink:
+            _request_with_retry(
+                None,
+                "GET",
+                zip_url,
+                operation="download",
+                timeout=httpx.Timeout(30.0, read=300.0),
+                follow_redirects=True,
+                sink=sink,
+            )
+        return destination
 
 
 # ── PDF splitting ──
@@ -318,9 +363,16 @@ def _poll_results(response: httpx.Response) -> list[dict]:
     return results
 
 
-def extract_pdf(pdf_path: str, *, api_token: str) -> list[bytes]:
-    """Return result bundles in source-page order, removing private chunks on exit."""
+@contextmanager
+def extract_pdf(pdf_path: str, *, api_token: str) -> Iterator[list[Path]]:
+    """Yield result bundles in source-page order from a directory that outlives them.
+
+    The private directory holds the uploaded page chunks and the downloaded ZIPs, so
+    rendering reads one archive at a time instead of keeping every bundle resident. It
+    is removed when the block exits, so an interrupted conversion leaves nothing behind.
+    """
     with tempfile.TemporaryDirectory(prefix="mineru-chunks-") as directory:
-        _, chunk_paths = _prepare_chunks(Path(pdf_path).resolve(), Path(directory), MAX_PAGES)
+        work = Path(directory)
+        _, chunk_paths = _prepare_chunks(Path(pdf_path).resolve(), work, MAX_PAGES)
         with closing(MinerUApi(api_token)) as api:
-            return api.submit_batch([str(path) for path in chunk_paths])
+            yield api.submit_batch([str(path) for path in chunk_paths], work)

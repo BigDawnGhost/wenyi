@@ -15,6 +15,7 @@ from ..errors import ArtifactCorrupt
 from .artifact_keys import validate_artifact_key
 from .atomic_write import write_text_atomic
 from .io_path import to_io_path
+from .jsonl import append_jsonl_record, iter_jsonl_records
 
 
 class FileArtifacts:
@@ -73,22 +74,14 @@ class FileArtifacts:
         return sorted(key for key in keys if key.startswith(prefix))
 
     def append_artifact_record(self, key: str, record: dict) -> None:
+        """Append one record under the artifact lock, syncing glossary checkpoints."""
         path = self._artifact_path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with self._artifact_lock, open(to_io_path(path), "a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+        with self._artifact_lock:
+            append_jsonl_record(path, record)
 
     def read_artifact_records(self, key: str) -> list[dict]:
         try:
-            lines = self._artifact_path(key).read_text(encoding="utf-8").splitlines()
+            return list(iter_jsonl_records(self._artifact_path(key)))
         except OSError:
             return []
-        rows = []
-        for line in lines:
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(row, dict):
-                rows.append(row)
-        return rows

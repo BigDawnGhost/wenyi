@@ -69,7 +69,7 @@ export function ContentsEditor({
         )}
         <div className="space-y-2 text-sm">
           <p className="font-medium">{t("contents.sourceTitle")}</p>
-          <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+          <p className="select-text whitespace-pre-wrap [overflow-wrap:anywhere]">
             {source || t("common.untitledChapter")}
           </p>
         </div>

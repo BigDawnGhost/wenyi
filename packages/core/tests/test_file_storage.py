@@ -13,6 +13,7 @@ from threading import Event, Thread
 from types import SimpleNamespace
 
 import pytest
+from wenyi_core.atomicio import publish_target
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
 from wenyi_core.llm.usage import UsageSample, UsageTracker
 from wenyi_core.models.document import Chapter, Segment
@@ -149,7 +150,8 @@ def test_windows_runstore_json_uses_valid_io_paths(monkeypatch, directory, io_di
         remove=remove,
     )
 
-    def open_json(path, mode, *, encoding):
+    def open_json(path, mode, *, encoding, opener=None):
+        assert (opener is not None) == (mode == "x")
         calls.append(("open", path, mode, encoding))
         return _RecordingText('{"target": "translation"}' if mode == "r" else "")
 
@@ -163,12 +165,10 @@ def test_windows_runstore_json_uses_valid_io_paths(monkeypatch, directory, io_di
     assert RunStore._read_json(path) == {"target": "translation"}
     temporary = calls[1][1]
     assert ntpath.dirname(temporary) == io_directory
-    assert re.fullmatch(
-        re.escape("context.json") + r"\.[0-9a-f]{32}\.tmp", ntpath.basename(temporary)
-    )
+    assert re.fullmatch(r"\.wenyi-[0-9a-f]{32}\.tmp", ntpath.basename(temporary))
     assert calls == [
         ("mkdir", io_directory, {"exist_ok": True}),
-        ("open", temporary, "w", "utf-8"),
+        ("open", temporary, "x", "utf-8"),
         ("fsync", 0),
         ("replace", temporary, io_path),
         ("open", io_path, "r", "utf-8"),
@@ -311,53 +311,126 @@ def test_slugify_avoids_reserved_names_and_trailing_dots(title, expected):
     assert slugify(title) == expected
 
 
-def test_sweep_removes_only_temporary_files_this_writer_produced(tmp_path):
-    """A startup sweep must not delete a file the program never wrote.
-
-    `*.tmp` also matches a name a person chose, so the sweep accepts only the
-    private suffix written here and the legacy single `.tmp` form it replaced.
-    """
+@pytest.mark.parametrize(
+    "key",
+    [
+        "source/.wenyi-cover.tmp",
+        "source/.timing-notes.tmp",
+        "source/other." + "a" * 32 + ".tmp",
+        "source/.wenyi-" + "b" * 32 + ".tmp",
+    ],
+)
+def test_initialization_preserves_published_artifact_with_temporary_looking_name(tmp_path, key):
     storage = RunStore(str(tmp_path))
-    reviews = tmp_path / "reviews" / "review-a" / "chunks"
-    reviews.mkdir(parents=True)
-    stale = [
-        tmp_path / ("manifest.json." + "a" * 32 + ".tmp"),
-        tmp_path / "manifest.json.tmp",
-        tmp_path / "ch0.json.tmp",
-        # A writer keeps its temporary file beside its target, so the sweep has
-        # to reach every directory an interrupted write could have used.
-        reviews / "ch0.json.tmp",
-    ]
-    kept = [
-        tmp_path / "notes.tmp.bak",
-        tmp_path / "draft.txt",
-        reviews / "ch0.json",
-    ]
-    for path in [*stale, *kept]:
-        path.write_text("{}", encoding="utf-8")
-    # A directory is never removed even when its name ends in the suffix.
-    (tmp_path / "archive.tmp").mkdir()
+    storage.write_artifact(key, {"cover": "published"})
 
-    removed = storage.sweep_temporary_files()
+    with storage.lock():
+        storage.begin_initialization("a" * 64)
 
-    assert sorted(Path(entry).name for entry in removed) == sorted(p.name for p in stale)
-    assert all(path.exists() for path in kept)
-    assert not any(path.exists() for path in stale)
-    assert (tmp_path / "archive.tmp").is_dir()
+    assert storage.read_artifact(key) == {"cover": "published"}
 
 
-def test_initialization_sweeps_temporary_files_from_the_run_directory(tmp_path):
+def test_initialization_keeps_unattributed_old_temporary_files(tmp_path):
     storage = RunStore(str(tmp_path))
-    stale = tmp_path / "chapters" / "ch0.json.tmp"
-    stale.write_text('{"index": 0}', encoding="utf-8")
-    nested = tmp_path / "analysis.json.tmp"
-    nested.write_text("{}", encoding="utf-8")
+    names = [
+        "manifest.json.tmp",
+        "analysis.json." + "a" * 32 + ".tmp",
+        ".wenyi-manifest.json." + "b" * 32 + ".tmp",
+        ".timing-abcdef12.tmp",
+        "user-draft.tmp",
+    ]
+    for name in names:
+        (tmp_path / name).write_bytes(b"unknown owner")
 
-    storage.begin_initialization("a" * 64)
+    with storage.lock():
+        storage.begin_initialization("a" * 64)
 
-    assert not stale.exists()
-    assert not nested.exists()
-    assert storage._read_json(storage.initialization_path) == {"source_sha256": "a" * 64}
+    assert all((tmp_path / name).read_bytes() == b"unknown owner" for name in names)
+
+
+def test_initialization_rebuilds_chapters_after_interrupted_state_writer(tmp_path):
+    storage = RunStore(str(tmp_path))
+    script = """
+import os
+import sys
+from wenyi_core.models.document import Chapter, Segment
+from wenyi_core.storage.run_store import RunStore
+
+def exit_before_publish(source, target):
+    os._exit(42)
+
+os.replace = exit_before_publish
+store = RunStore(sys.argv[1])
+with store.lock():
+    store.save_chapter(Chapter(index=0, segments=[Segment(index=0, source="partial")]))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, storage.run_dir], capture_output=True, timeout=30
+    )
+    assert result.returncode == 42, result.stderr
+    (temporary,) = (tmp_path / "chapters").iterdir()
+    assert json.loads(temporary.read_bytes())["segments"][0]["source"] == "partial"
+
+    with storage.lock():
+        storage.begin_initialization("a" * 64)
+
+    assert list((tmp_path / "chapters").iterdir()) == []
+    assert storage.read_artifact(".initializing.json") == {"source_sha256": "a" * 64}
+
+
+def test_initialization_does_not_interrupt_an_export_in_another_lock_domain(tmp_path):
+    exporting = RunStore(str(tmp_path))
+    initializing = RunStore(str(tmp_path))
+    target = tmp_path / "book.txt"
+
+    with exporting.assemble_lock(), publish_target(target) as temporary:
+        temporary.write_bytes(b"complete export")
+        with initializing.lock():
+            initializing.begin_initialization("a" * 64)
+        assert temporary.read_bytes() == b"complete export"
+
+    assert target.read_bytes() == b"complete export"
+
+
+@pytest.mark.parametrize("linked_root", [False, True])
+def test_initialization_has_no_temporary_sweep_through_symlink(tmp_path, linked_root):
+    root, destination = tmp_path / "run", tmp_path / "destination"
+    destination.mkdir()
+    if not linked_root:
+        root.mkdir()
+    link = root if linked_root else root / "source"
+    try:
+        link.symlink_to(destination, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("Directory symlinks are unavailable on this platform")
+    staged_looking = destination / (".wenyi-" + "a" * 32 + ".tmp")
+    staged_looking.write_bytes(b"not owned by initialization")
+    storage = RunStore(str(root))
+
+    with storage.lock():
+        storage.begin_initialization("a" * 64)
+
+    assert staged_looking.read_bytes() == b"not owned by initialization"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Directory junctions are Windows-specific")
+def test_initialization_has_no_temporary_sweep_through_windows_junction(tmp_path):
+    root, destination = tmp_path / "run", tmp_path / "destination"
+    storage = RunStore(str(root))
+    destination.mkdir()
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(root / "source"), str(destination)],
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    staged_looking = destination / (".wenyi-" + "a" * 32 + ".tmp")
+    staged_looking.write_bytes(b"not owned by initialization")
+
+    with storage.lock():
+        storage.begin_initialization("a" * 64)
+
+    assert staged_looking.read_bytes() == b"not owned by initialization"
 
 
 def test_replacement_retries_while_another_process_holds_the_target(tmp_path):
@@ -568,6 +641,46 @@ def test_export_snapshot_waits_for_in_flight_chapter_publication(tmp_path, monke
     assert snapshot.load_manifest()["chapters"][0]["status"] == STATUS_DONE
 
 
+def test_uncommitted_chapter_journal_is_not_listed_after_process_exit(tmp_path):
+    storage = _pending_store(tmp_path)
+    public_key = ".wenyi-" + "a" * 32 + ".tmp"
+    storage.write_artifact(public_key, {"published": True})
+    listed = storage.list_artifacts()
+    run = Path(storage.run_dir)
+    entries = set(run.iterdir())
+    script = """
+import os
+import sys
+from wenyi_core.storage.chapter_publication import JOURNAL_NAME
+from wenyi_core.storage.file import FileStorage
+
+replace = os.replace
+def exit_before_journal_replace(source, target):
+    if os.path.basename(target) == JOURNAL_NAME:
+        os._exit(42)
+    replace(source, target)
+
+os.replace = exit_before_journal_replace
+store = FileStorage(sys.argv[1], create=False)
+chapter = store.load_chapter(0)
+chapter.segments[0].target = "not yet committed"
+store.save_chapter_with_status(chapter, "done")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, storage.run_dir], capture_output=True, timeout=30
+    )
+    assert result.returncode == 42, result.stderr
+    (staging,) = set(run.iterdir()) - entries
+    assert "not yet committed" in json.loads(staging.read_bytes())["chapter"]["text"]
+
+    reopened = FileStorage(storage.run_dir, create=False)
+    assert public_key in listed
+    assert reopened.list_artifacts() == listed
+    assert reopened.read_artifact(JOURNAL_NAME) is None
+    assert reopened.pending_chapters() == [0]
+    assert reopened.load_chapter(0).segments[0].target is None
+
+
 def test_chapter_publication_survives_process_exit_between_formal_replacements(tmp_path):
     storage = _pending_store(tmp_path)
     script = """
@@ -599,9 +712,7 @@ store.save_chapter_with_status(chapter, "done")
     reopened = FileStorage(storage.run_dir, create=False)
     assert reopened.pending_chapters() == []
     assert reopened.load_chapter(0).segments[0].target == ""
-    # Recovery survives a normal temp sweep, then runs only once.
-    with reopened._run.lock():
-        reopened._run.sweep_temporary_files()
+    # Recovery on a modifying resume runs only once.
     with reopened.lock():
         reopened.ensure_source_identity("", actual_sha256="0" * 64)
         assert reopened.pending_chapters() == []

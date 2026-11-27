@@ -7,13 +7,13 @@ Domain services use the same storage interface as the Web backend.
 
 from __future__ import annotations
 
-import json
 import os
 from contextlib import contextmanager
 from typing import Any, Iterator, Optional
 
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..models.document import Chapter, Document
+from .jsonl import iter_jsonl_records
 from .protocol import STATUS_PENDING  # noqa: F401
 from .run_store import STATUS_DONE, RunStore  # noqa: F401 (re-export)
 
@@ -212,22 +212,11 @@ class FileStorage:
         self._run.log_event(event, **data)
 
     def list_events(self, *, event_type: Optional[str] = None, limit: int = 200) -> list[dict]:
-        path = self._run.event_log_path
-        if not os.path.isfile(path):
-            return []
-        rows: list[dict] = []
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if event_type and row.get("event") != event_type:
-                    continue
-                rows.append(row)
+        rows = [
+            row
+            for row in iter_jsonl_records(self._run.event_log_path)
+            if not event_type or row.get("event") == event_type
+        ]
         return rows[-limit:] if limit else rows
 
     # Glossary operations delegated to GlossaryStore.
