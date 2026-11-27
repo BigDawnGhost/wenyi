@@ -339,10 +339,9 @@ an upgrade instruction depend on a clickable link or image inside the app.
 Draft notes from the verified net changes since the previous stable release on the
 target's history, not a commit dump or unrelated “latest” tag. State platform scope,
 real upgrade actions and caveats; do not claim signing, test execution, performance
-or quality improvements without evidence. A behavior reversal whose reason is not
-evident from the diff gets one line pointing at the decision record, for example the
-BabelDOC fillback change carried in by the PDF redo review. Keep that line under
-Development and documentation; it explains the change rather than advertising it. Keep languages equivalent and process
+or quality improvements without evidence. If the reason for a behavior reversal is
+not clear from the diff, link to its decision record under Development and
+documentation. Keep languages equivalent and process
 context outside the copyable release body. The repository
 [release-notes skill](../../.agents/skills/release-notes/SKILL.md) supplies the
 detailed drafting workflow; drafting does not authorize publishing.

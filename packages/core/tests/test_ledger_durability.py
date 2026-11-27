@@ -1,8 +1,7 @@
 """Checkpoint-boundary durability for append-only event ledgers.
 
-Only a record whose loss would repeat completed work pays for a sync. The tests
-pin the boundary itself, so an added durable event has to be an explicit choice
-rather than a side effect of logging more.
+File appends request an explicit sync only for the glossary checkpoint. SQLite
+has its own transaction commit boundary.
 """
 
 from __future__ import annotations
@@ -12,7 +11,9 @@ import os
 from threading import Thread
 
 import pytest
-from wenyi_core.storage.artifacts import FileArtifacts, is_durable_record
+from wenyi_core.storage.artifacts import FileArtifacts
+from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.jsonl import is_durable_record
 from wenyi_core.storage.run_store import RunStore
 from wenyi_core.storage.sqlite import SqliteStorage
 
@@ -52,7 +53,7 @@ def test_file_events_sync_only_at_the_checkpoint_boundary(tmp_path, syncs):
     assert syncs == [], "ordinary progress events must stay buffered"
 
     store.log_event("batch_glossary_extracted", chapter=0, start_index=0, count=3, summary={})
-    assert len(syncs) == 1, "the checkpoint record must reach the disk before returning"
+    assert len(syncs) == 1, "the checkpoint append must sync the file before returning"
 
     with open(store.event_log_path, encoding="utf-8") as handle:
         rows = [json.loads(line) for line in handle]
@@ -83,6 +84,106 @@ def test_file_artifact_appends_sync_only_a_checkpoint_record(tmp_path, syncs):
         "batch_glossary_extracted",
         "hint-2",
     ]
+
+
+def test_file_artifact_accepts_a_json_array_as_the_event_value(tmp_path, syncs):
+    storage = FileStorage(str(tmp_path))
+    key = "reviews/review-1/events.jsonl"
+    record = {"event": ["custom"]}
+
+    storage.append_artifact_record(key, record)
+
+    assert FileStorage(str(tmp_path), create=False).read_artifact_records(key) == [record]
+    assert syncs == []
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [b'{"event":', b'{"event":"\xe6\x9c'],
+    ids=["malformed-json", "truncated-utf8"],
+)
+def test_file_events_recover_checkpoints_on_both_sides_of_a_damaged_tail(tmp_path, tail):
+    storage = FileStorage(str(tmp_path))
+    storage.log_event("batch_glossary_extracted", chapter=0, start_index=0, count=2)
+    path = tmp_path / "events.jsonl"
+    with path.open("ab") as handle:
+        handle.write(tail)
+    original = path.read_bytes()
+
+    storage.log_event("batch_glossary_extracted", chapter=0, start_index=2, count=1)
+
+    assert path.read_bytes().startswith(original)
+    reopened = FileStorage(str(tmp_path), create=False)
+    assert reopened.completed_batch_glossary_keys(0) == {"0:2", "2:1"}
+    assert [row["start_index"] for row in reopened.list_events()] == [0, 2]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Requires POSIX file permissions")
+@pytest.mark.parametrize("tail", [b"", b'{"event":"\xe6\x9c'], ids=["complete", "damaged"])
+def test_file_events_can_append_without_read_permission(tmp_path, syncs, tail):
+    storage = FileStorage(str(tmp_path))
+    storage.log_event("first")
+    path = tmp_path / "events.jsonl"
+    with path.open("ab") as handle:
+        handle.write(tail)
+    original = path.read_bytes()
+
+    path.chmod(0o200)
+    try:
+        if os.access(path, os.R_OK):
+            pytest.skip("Current process can read a write-only file")
+        storage.log_event("ordinary")
+        assert syncs == []
+        storage.log_event("batch_glossary_extracted", chapter=0, start_index=0, count=1)
+        assert len(syncs) == 1
+    finally:
+        path.chmod(0o600)
+
+    assert path.read_bytes().startswith(original)
+    reopened = FileStorage(str(tmp_path), create=False)
+    assert [row["event"] for row in reopened.list_events()] == [
+        "first",
+        "ordinary",
+        "batch_glossary_extracted",
+    ]
+    assert reopened.completed_batch_glossary_keys(0) == {"0:1"}
+
+
+@pytest.mark.parametrize(
+    ("tail", "legacy_rows"),
+    [
+        (b'{"event":"\xe6\x9c', []),
+        (b'null\n{"event":"legacy"}', [{"event": "legacy"}]),
+    ],
+    ids=["truncated-utf8", "valid-unterminated-record"],
+)
+def test_file_artifact_records_survive_a_legacy_tail(tmp_path, tail, legacy_rows):
+    storage = FileStorage(str(tmp_path))
+    key = "reviews/review-1/events.jsonl"
+    first = {"event": "hint", "message": "a\u2028b"}
+    storage.append_artifact_record(key, first)
+    with (tmp_path / key).open("ab") as handle:
+        handle.write(tail)
+
+    last = {"event": "batch_glossary_extracted"}
+    storage.append_artifact_record(key, last)
+
+    reopened = FileStorage(str(tmp_path), create=False)
+    assert reopened.read_artifact_records(key) == [first, *legacy_rows, last]
+
+
+def test_failed_checkpoint_sync_propagates_without_undoing_written_bytes(tmp_path, monkeypatch):
+    storage = FileStorage(str(tmp_path))
+
+    def fail_sync(_descriptor):
+        raise OSError("checkpoint sync failed")
+
+    monkeypatch.setattr(os, "fsync", fail_sync)
+    with pytest.raises(OSError, match="checkpoint sync failed"):
+        storage.log_event("batch_glossary_extracted", chapter=0, start_index=0, count=1)
+
+    reopened = FileStorage(str(tmp_path), create=False)
+    assert reopened.completed_batch_glossary_keys(0) == {"0:1"}
 
 
 def test_concurrent_checkpoint_appends_keep_one_record_per_line(tmp_path):
@@ -121,11 +222,10 @@ def sqlite_store(tmp_path):
     storage.close_all()
 
 
-def test_sqlite_connections_commit_checkpoints_synchronously(sqlite_store):
+def test_sqlite_connection_uses_full_synchronous_in_wal_mode(sqlite_store):
     connection = sqlite_store._connection()
     assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
-    # 2 is FULL: a committed checkpoint event is on the disk before log_event returns,
-    # whatever a database left by another tool asked for.
+    # FULL (2) controls WAL sync at transaction commit.
     assert connection.execute("PRAGMA synchronous").fetchone()[0] == 2
 
 

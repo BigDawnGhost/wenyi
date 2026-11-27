@@ -35,13 +35,12 @@ signature before invocation. A callback that cannot bind four positional
 arguments, or whose signature cannot be inspected, receives the same tick
 without the payload. Callback exceptions propagate without retrying the callback.
 
-PDF assembly reports one stage-level tick, `progress(0, 0, "progress.stage.assembling")`,
-before the writers run, so a PDF export shows no per-chunk position. Finer
-granularity needs a bridge protocol that renders a page range per request; a
-client-side chunk loop over the current single-request fillback would re-render
-the whole book once per chunk. Treat the single tick as the current contract
-rather than a missing callback, and do not derive export progress from the
-number of PDF objects.
+When given a progress callback, Core's `AssemblyService` emits one stage tick,
+`progress(0, 0, "progress.stage.assembling")`, before running the writers for any
+output format. Standalone Web and Desktop exports call the writer directly and
+do not emit this Core tick. BabelDOC fillback renders the entire session without
+reporting page progress. Repeating the request re-renders the same PDF rather
+than advancing a chunk; object counts do not measure export progress.
 
 <a id="initialization"></a>
 
@@ -178,19 +177,6 @@ and optional extracted `object_source` text, used like EPUB's original markup
 references. Missing/empty references from older bridges use a generic object
 description. PDF objects retain their markers in formal targets through Review/Autofix;
 missing or damaged markers use the same bounded repair as EPUB.
-
-`pdf_bridge.client` retries its own requests: transient statuses, transport failures
-and server errors are retried with bounded exponential backoff, and the bridge SDK's
-own retries stay disabled. Nothing else consumes `BabeldocBridgeUnavailableError`
-(`client.py`), so a raised bridge error is terminal for its caller. Do not add a
-retry branch around a bridge call or branch on that class: by the time it escapes the
-client the attempts are already spent. Health and extract were the original authorized
-retry scope; fillback is retried as a deliberate widening of it, because the bridge
-loads a fresh copy of the frozen IL for every `/fillback` request, so a repeated
-request re-renders from the same source instead of continuing an earlier pass
-("Every `/fillback` loads a fresh copy of the frozen IL, so retries do not reuse
-objects modified by an earlier fillback or typesetting pass", bridge `docs/api.md`,
-Session recovery).
 Review evidence hashes still bind the actual saved target, with object references
 supplied separately. Annotation offsets/digests bind the marker-free text. Export
 resolves markers only on a disposable chapter copy. Failed objects remain pending
@@ -200,6 +186,18 @@ The bridge retains valid siblings and
 translated prose, recording omissions without modifying frozen source objects.
 Older PDF sessions require a fresh import rather than an in-place source
 rewrite.
+
+`pdf_bridge.client` owns bounded retries with exponential backoff. `/health` and
+`/fillback` can retry transient transport errors, HTTP 408/409/429, and 5xx responses.
+`/extract` creates a session; it retries only failures known to precede transmission
+(`ConnectError`, `ConnectTimeout`, `PoolTimeout`, excluding terminal protocol or
+certificate failures). Once the request may have been sent, including on a read
+timeout or HTTP error, the client does not replay it. Callers must not wrap the
+client in another retry loop, including on `BabeldocBridgeUnavailableError`.
+The [bridge session contract](https://github.com/BigDawnGhost/wenyi-babeldoc-bridge/blob/main/docs/api.md#session-recovery)
+loads a fresh copy of the frozen IL for each `/fillback`. Retrying renders the
+same session again without reusing mutated objects, but may repeat rendering work.
+The client publishes the PDF only after a full response download.
 
 EPUB adapts its `epub_annotations` items and existing annotation-context registry to
 these contracts. Save safely cleaned slices and digest-bound placements together.
@@ -408,21 +406,32 @@ increment is merged into the book ledger **once**. Retry or resume must not add 
 previously merged delta again.
 
 The usage coordinator serializes recovery, baseline reads and journal preparation
-under the state lock. It durably prepares the absolute ledger snapshots in
-`usage-pending.json` before advancing its in-memory checkpoint. SQL journal
-preparation commits before that advance; publication uses a separate short
-transaction. A publication or event failure leaves a recoverable journal. A later
-flush recovers earlier work before preparing its own increment.
+under the state lock. It prepares absolute snapshots in `usage-pending.json` before
+advancing its in-memory checkpoint. The file adapter flushes and syncs a temporary
+file before replacing the journal; SQL commits journal preparation before the
+separate publication transaction. A later flush recovers pending snapshots before
+preparing another increment. The journal, not the diagnostic `usage_summary` event,
+keeps recovery from applying an increment twice.
 
-Appended events stay buffered unless losing one would repeat completed work. A file
-ledger flushes and fsyncs only the batch-glossary checkpoint record, which is what a
-resumed run reads to skip extraction again; every other event keeps the buffered
-append that batch translation depends on. The checkpoint is recognised from the record
-itself, so add-only storage ports keep their signature. A durable append must not
-reorder records or hold the state lock longer, and it must stay inside the existing
-event lock. The SQL adapter commits every append on a connection opened with the FULL
-synchronous mode, so it needs no separate branch. Text written by the atomic write
-helper is still flushed and synced before its rename.
+File event and artifact logs are UTF-8 JSONL. Under their existing writer locks,
+appends insert a newline if the file ends mid-line, without truncating or rewriting
+existing bytes. For a write-only log, appends always insert this separator because
+they cannot inspect the tail. Readers skip blank, malformed UTF-8, invalid JSON
+and non-object lines individually; a valid final object is readable even without
+a trailing newline.
+Ordinary appends flush on close without an explicit file sync. An append whose
+`event` is the string `batch_glossary_extracted` flushes and fsyncs the open file
+before returning, so resume can find that checkpoint and skip repeat extraction.
+A sync error propagates; the appended bytes may already be visible, and are not
+rolled back. This file sync does not sync directory entries or guarantee recovery
+after whole-system power loss, and it does not implement usage idempotency.
+
+SQL adapters insert records transactionally, with no event-specific sync. Desktop
+SQLite uses WAL and sets `synchronous=FULL` on each connection. SQLite syncs the WAL
+at the outer transaction commit, not at each append within it. Web PostgreSQL
+uses the enclosing state transaction when present, or the pooled connection's
+transaction otherwise; commit durability follows PostgreSQL configuration, not
+SQLite's pragma.
 
 Track actual available usage for successful and failed paid attempts. Do not infer
 usage from batch counts, repeat a cache hit as a call, or report unavailable provider

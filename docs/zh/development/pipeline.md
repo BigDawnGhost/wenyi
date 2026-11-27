@@ -30,10 +30,10 @@ Runtime 提供配置、冻结语言计划、存储及一个路由模型客户端
 不能绑定四个位置参数或无法检查签名时，照常报告该条进度，只省略载荷。
 回调自身抛出的异常直接传播，不会重试回调。
 
-PDF 装配在 writer 执行前只报告一次阶段级进度 `progress(0, 0, "progress.stage.assembling")`，
-因此 PDF 导出没有按分块推进的位置。更细的粒度需要桥侧提供按页范围渲染的协议；
-在当前单请求回填之上做客户端分块，等于每个分块重渲整本书。
-应把这次阶段级进度视为现状契约，而不是缺失的回调，也不要用 PDF 对象数量推算导出进度。
+提供进度回调时，Core 的 `AssemblyService` 在调用 writer 前报告一次阶段级进度
+`progress(0, 0, "progress.stage.assembling")`，不限于 PDF。Web 与 Desktop 的独立导出
+直接调用 writer，不发送这条 Core 进度。BabelDOC 每次回填都会渲染整个会话，不报告页级进度。
+重复发送当前请求只是重渲同一份 PDF，不会推进一个分块；对象数量也不能衡量导出进度。
 
 <a id="initialization"></a>
 
@@ -147,14 +147,14 @@ Review 证据摘要仍绑定真实保存的译文，对象参考单独提供；�
 bridge 保留正常对象与译文正文，记录省略项，不修改冻结的原始对象。
 旧 PDF 会话需重新导入，不原地重写源文。
 
-`pdf_bridge.client` 在自己的调用内完成重试：可重试状态码、传输失败和服务端错误按有界指数退避重试，
-并关闭 SDK 自带重试。`BabeldocBridgeUnavailableError`（`client.py`）没有其他生产消费方，
-抛出即代表该调用的终态。不要围绕桥调用再加一层重试分支，也不要按该异常类分支：
-异常逃出 client 时重试次数已经用完。
-health 与 extract 是最初授权的重试范围；fillback 的可重试是对该范围的**有意扩大**——
-桥对每个 `/fillback` 请求都重新加载冻结 IL 的副本，因此重复请求是从同一源重新渲染，
-而不是接着上一次渲染继续（桥 `docs/api.md` Session recovery："Every `/fillback` loads a fresh copy
-of the frozen IL, so retries do not reuse objects modified by an earlier fillback or typesetting pass"）。
+`pdf_bridge.client` 负责采用指数退避的有限重试。`/health` 和 `/fillback` 可在遇到暂时性传输错误、
+HTTP 408／409／429 或 5xx 时重试。`/extract` 会创建会话，只重试确定发生在请求发送前的失败
+（`ConnectError`、`ConnectTimeout`、`PoolTimeout`，不含终态协议或证书错误）。
+请求一旦可能已发出，例如读取超时或收到 HTTP 错误，就不再重放。
+调用方不得在客户端外再加一层重试，即使收到 `BabeldocBridgeUnavailableError`。
+按[桥接服务的会话契约](https://github.com/BigDawnGhost/wenyi-babeldoc-bridge/blob/main/docs/zh/api.md#会话恢复)，
+每次 `/fillback` 都加载一份冻结 IL 的新副本。重试会重新渲染同一会话，不复用已修改的对象，
+但可能重复渲染工作。客户端只在完整下载响应后才发布 PDF。
 
 EPUB 将 `epub_annotations` 条目及既有注释上下文索引适配到上述契约。
 可安全清理的片段与绑定摘要的位置一起保存。
@@ -334,16 +334,23 @@ Review 保存自身增量，各增量只合并进书籍总账**一次**；
 重试或续跑不得再次添加已经合并的增量。
 
 用量协调器在状态锁下串行恢复、读基线和准备日志。
-先将账本绝对快照持久写入 `usage-pending.json`，再推进内存检查点。
-SQL 日志准备事务在检查点推进前提交，真正发布使用另一个短事务。
-发布或事件失败后仍有可恢复日志；下次 flush 先恢复旧工作，再准备自身增量。
+先将账本绝对快照写入 `usage-pending.json`，再推进内存检查点。
+文件适配器在替换日志前对临时文件执行 flush 和 fsync；
+SQL 在独立的发布事务之前提交日志准备事务。下次 flush 先恢复待发布快照，再准备新增量。
+恢复不重复应用增量靠的是日志，而不是用于诊断的 `usage_summary` 事件。
 
-追加事件默认只留在缓冲区，只有丢失后会重做已完成工作的记录才立即落盘。
-文件账本仅对批次术语检查点记录执行 flush 与 fsync，续跑正是靠它跳过重复抽取；
-其余事件保持分批写入所需的缓冲追加。检查点按记录本身判定，只追加的存储端口因此不必改签名。
-落盘不得改变记录顺序或延长状态锁持有时间，并且必须在既有事件锁内完成。
-SQL 适配器在开启 `synchronous=FULL` 的连接上逐条提交，无需单独分支。
-原子写工具写入的文本在重命名前仍会 flush 并 fsync。
+文件事件与产物日志使用 UTF-8 JSONL。追加在原有的写入锁内进行；若文件末尾缺少换行，
+先追加一个换行，不截断或改写已有字节。仅可写的日志无法检查结尾，因此每次追加都先加换行。
+读取时逐行跳过空行、无效 UTF-8、损坏 JSON 和非对象值；
+结尾即使没有换行，仍读取有效的 JSON 对象。普通追加在关闭文件时刷新缓冲，不显式同步文件。
+仅当 `event` 是字符串 `batch_glossary_extracted` 时，追加才在返回前对打开的文件执行 flush 和
+fsync，供续跑识别检查点、跳过重复抽取。同步失败会报错，但已写的字节可能已经可见，不会回滚。
+这次文件同步不包含目录项，不保证整机断电后一定能恢复，也不是用量幂等机制。
+
+SQL 适配器通过事务插入记录，不按事件类型单独同步。Desktop SQLite 使用 WAL，
+并在每个连接上设置 `synchronous=FULL`；SQLite 在最外层事务提交时同步 WAL，而非事务内逐条追加时。
+Web PostgreSQL 在已有状态事务中写入，否则使用池连接的事务；
+提交的持久性取决于 PostgreSQL 配置，与 SQLite 的 pragma 无关。
 
 成功及失败的付费尝试都记录实际可取得的用量。
 不能用批次数推算用量、把缓存复用计为调用，或将 provider 未报告的值当成零。
