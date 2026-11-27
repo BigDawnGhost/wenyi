@@ -202,6 +202,7 @@ Only `models ping` sends live probes; see the [CLI reference](../guide/cli.md#mo
 | `gemini` | Native API, `https://generativelanguage.googleapis.com` | `GEMINI_API_KEY`, then `GOOGLE_API_KEY` when no custom variable is set |
 | `openai-compatible` | Explicit `base_url` required | Optional `api_key_env` |
 | `orcarouter` | `https://api.orcarouter.ai/v1` | `ORCAROUTER_API_KEY` |
+| `atlascloud` | `https://api.atlascloud.ai/v1` | `ATLASCLOUD_API_KEY` |
 | `ollama` | `http://localhost:11434/v1` | Optional `api_key_env` |
 | `vllm` | `http://localhost:8000/v1` | Optional `api_key_env` |
 | `fake` | No network | None |
@@ -218,7 +219,7 @@ Only `models ping` sends live probes; see the [CLI reference](../guide/cli.md#mo
 | `json_response_fallback` | Compatible kinds | `none`, or explicit `reasoning_content` for gateways returning valid JSON there. |
 | `request_overrides` | Compatible kinds | `{}`; endpoint-specific request extensions. |
 
-“Compatible kinds” means `openai-compatible`, `orcarouter`, `ollama`, and `vllm`.
+“Compatible kinds” means `openai-compatible`, `orcarouter`, `atlascloud`, `ollama`, and `vllm`.
 They additionally accept **connection-level**
 `llm.providers.<id>.reasoning_style`: `none` (default), `deepseek`, `openai`,
 or `openrouter`. `fake` accepts no model options.
