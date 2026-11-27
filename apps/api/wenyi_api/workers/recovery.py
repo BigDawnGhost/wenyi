@@ -7,6 +7,7 @@ from typing import Protocol, runtime_checkable
 
 from arq.jobs import Job, JobStatus
 from wenyi_backend.context import BackendStorage, current_context
+from wenyi_backend.execution.runner import WorkflowOutcome, finish_catalog_job
 
 from .. import dal
 from ..db import get_pool
@@ -24,11 +25,11 @@ async def recover_jobs(ctx: dict) -> None:
     # The grace period avoids the normal interval between SQL creation and enqueue.
     with get_pool().connection() as conn:
         rows = conn.execute(
-            """SELECT id,project_id,arq_job_id,kind,params FROM jobs
+            """SELECT id,project_id,arq_job_id,kind,params,updated_at FROM jobs
             WHERE status IN ('queued','running')
             AND updated_at < now() - interval '2 minutes' ORDER BY id"""
         ).fetchall()
-    for job_id, pid, arq_id, kind, params in rows:
+    for job_id, pid, arq_id, kind, params, updated_at in rows:
         is_export = kind == "export"
         export_id = (params or {}).get("export_id") if is_export else None
         if is_export and (
@@ -52,10 +53,14 @@ async def recover_jobs(ctx: dict) -> None:
         )
         try:
             with lock:
-                # Running workers keep these session locks through rendering/model calls.
-                # No lock means that worker is gone even if Redis retains an in-progress TTL.
+                # Mutual exclusion makes inspection safe. Contention says nothing about
+                # writer progress; never take over a live writer on a telemetry timeout.
                 current = dal.get_job(job_id)
-                if not current or current["status"] not in {"queued", "running"}:
+                if (
+                    not current
+                    or current["status"] not in {"queued", "running"}
+                    or current["updated_at"] != updated_at.isoformat()
+                ):
                     continue
                 if current["status"] == "queued":
                     queue = "wenyi:exports" if is_export else "wenyi:workflows"
@@ -74,11 +79,8 @@ async def recover_jobs(ctx: dict) -> None:
                     )
                 else:
                     message = "Worker stopped before completion; resume this task to continue from saved progress"
-                    dal.set_job_status(job_id, "interrupted", error=message)
-                    latest = dal.list_jobs(pid)
-                    workflow = next((job for job in latest if job["kind"] != "export"), None)
-                    if workflow and workflow["id"] == job_id:
-                        dal.set_project_status(pid, "paused", error=message)
+                    orphan = WorkflowOutcome("interrupted", "paused", RuntimeError(message))
+                    if finish_catalog_job(current_context().repository, current, orphan) is orphan:
                         storage.log_event("task_interrupted", run_id=arq_id, error=message)
         except BlockingIOError:
             continue

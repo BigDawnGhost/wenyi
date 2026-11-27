@@ -15,7 +15,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import copy_context
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -23,13 +23,13 @@ from pathlib import Path
 from typing import Any, Iterator, TypeVar
 
 from wenyi_backend.context import BackendContext
-from wenyi_backend.execution.runner import drain
+from wenyi_backend.execution.runner import WorkflowOutcome, drain, finish_catalog_job
 from wenyi_backend.live_statistics import read_live_statistics
 from wenyi_core.storage.locks import FileLockHandle, StorageBusyError
 
 from . import notices, paths
 from .diagnostics import Reporter, emit, failure_attributes, scope
-from .local_backend import LocalBackend
+from .local_backend import LocalBackend, ProjectLocationUnavailable
 
 log = logging.getLogger(__name__)
 _T = TypeVar("_T")
@@ -81,7 +81,7 @@ class ProgressHub:
         self._dirty: dict[str, dict] = {}
         self._subscribers: dict[str, set[asyncio.Queue[str | None]]] = {}
         self._wake = asyncio.Event()
-        self._closing = False
+        self._closing = asyncio.Event()
         self._writer: asyncio.Task | None = None
 
     def start(self) -> None:
@@ -100,9 +100,9 @@ class ProgressHub:
             return value
 
     def set(self, key: str, value: str, *, ex: int) -> None:
-        if self._closing:
-            return
         with self._lock:
+            if self._closing.is_set():
+                return
             self._cache[key] = (time.monotonic() + ex, value)
             self._cache.move_to_end(key)
             while len(self._cache) > 256:
@@ -116,7 +116,7 @@ class ProgressHub:
         self.loop.call_soon_threadsafe(self._wake.set)
 
     def publish(self, channel: str, value: str) -> None:
-        if not self._closing:
+        if not self._closing.is_set():
             self.loop.call_soon_threadsafe(self._deliver, channel, value)
 
     def _deliver(self, channel: str, value: str | None) -> None:
@@ -154,14 +154,16 @@ class ProgressHub:
         while True:
             await self._wake.wait()
             self._wake.clear()
-            if self._closing:
-                await self.flush()
-                return
-            await asyncio.sleep(0.25)
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self._closing.wait(), timeout=0.25)
+            closing = self._closing.is_set()
             await self.flush()
+            if closing:
+                return
 
     async def stop(self) -> None:
-        self._closing = True
+        with self._lock:
+            self._closing.set()
         self._wake.set()
         if self._writer is not None:
             await self._writer
@@ -208,6 +210,7 @@ class LocalRuntime:
         self.export_queue: asyncio.Queue[tuple[str, dict, str] | None] = asyncio.Queue(maxsize=128)
         self._submitted: set[str] = set()
         self._active: dict[str, asyncio.Task] = {}
+        self._pause_requests: dict[str, asyncio.Event] = {}
         self._cancelling: set[asyncio.Task] = set()
         self._workflows: set[asyncio.Task] = set()
         self._consumers: list[asyncio.Task] = []
@@ -278,6 +281,21 @@ class LocalRuntime:
         if not task.done() and task not in self._cancelling:
             self._cancelling.add(task)
             task.cancel()
+
+    @contextmanager
+    def watch_pause(self, run_id: str) -> Iterator[asyncio.Event]:
+        requested = self._pause_requests[run_id] = asyncio.Event()
+        try:
+            yield requested
+        finally:
+            del self._pause_requests[run_id]
+
+    def notify_pause(self, run_id: str) -> None:
+        def wake() -> None:
+            if requested := self._pause_requests.get(run_id):
+                requested.set()
+
+        self.hub.loop.call_soon_threadsafe(wake)
 
     async def _run_observed(self, name: str, values: dict, run_id: str) -> None:
         from wenyi_backend.workers import tasks
@@ -450,7 +468,11 @@ class LocalRuntime:
         if job is None or job["status"] not in {"queued", "running"}:
             return False
         pid = job["project_id"]
-        storage = self.backend.storage_for(pid)
+        try:
+            storage = self.backend.storage_for(pid)
+        except ProjectLocationUnavailable:
+            # Orphan recovery cannot inspect this lock until the library returns.
+            return False
         is_export = job["kind"] == "export"
         try:
             lock = (
@@ -459,25 +481,23 @@ class LocalRuntime:
                 else storage.lock(blocking=False)
             )
             with lock:
-                changed = self.backend.set_job_status(
-                    job["id"],
-                    "error" if is_export else "interrupted",
-                    error=reason,
-                    expected_status={"queued", "running"},
-                )
-                if not changed:
+                if not is_export:
+                    # Re-read under the lock; the writer may have left a receipt.
+                    current = self.backend.get_job(job["id"])
+                    return (
+                        current is not None
+                        and finish_catalog_job(
+                            self.backend,
+                            current,
+                            WorkflowOutcome("interrupted", "paused", RuntimeError(reason)),
+                        )
+                        is not None
+                    )
+                if not self.backend.set_job_status(
+                    job["id"], "error", error=reason, expected_status={"queued", "running"}
+                ):
                     return False
-                if is_export:
-                    self.backend.set_export_status(
-                        job["params"]["export_id"], "error", error=reason
-                    )
-                else:
-                    latest = next(
-                        (row for row in self.backend.list_jobs(pid) if row["kind"] != "export"),
-                        None,
-                    )
-                    if latest and latest["id"] == job["id"]:
-                        self.backend.set_project_status(pid, "paused", error=reason)
+                self.backend.set_export_status(job["params"]["export_id"], "error", error=reason)
                 return True
         except BlockingIOError:
             # A live writer must never be declared dead just because its work is slow.
@@ -506,13 +526,18 @@ class LocalRuntime:
                 except Exception:
                     log.exception("Could not recover local jobs")
 
-    async def stop(self) -> None:
-        if self._shutdown_task is None:
+    def begin_shutdown(self) -> None:
+        """Stop admission and signal active writers without waiting for HTTP shutdown."""
+        if not self._stopping.is_set():
             self.accepting = False
             self._stopping.set()
             # A supervisor may already have scheduled a worker that has not entered yet.
             for task in tuple(self._active.values()):
                 self._cancel(task)
+
+    async def stop(self) -> None:
+        self.begin_shutdown()
+        if self._shutdown_task is None:
             self._shutdown_task = asyncio.create_task(self._shutdown())
         # The caller also owns the services this task needs to finish draining.
         await _await_owned(self._shutdown_task)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import closing
 from dataclasses import asdict
+from datetime import datetime, timedelta, timezone
 
 import yaml
 from fastapi import APIRouter
@@ -135,6 +136,20 @@ def project_stats(pid: str) -> dict:
     return {"usage": usage, "timing": timing}
 
 
+def _progress_quiet(job: dict | None, progress: dict | None) -> bool:
+    """Report silence, not loss of ownership. Statistics/socket heartbeats are not progress."""
+    if not job or job["status"] != "running":
+        return False
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=2)
+    for stamp in ((progress or {}).get("updated_at"), job.get("updated_at")):
+        if isinstance(stamp, str):
+            try:
+                return datetime.fromisoformat(stamp) <= cutoff
+            except (TypeError, ValueError):
+                continue
+    return False
+
+
 @router.get("/projects/{pid}/workflow", response_model=WorkflowOut)
 def workflow(pid: str) -> dict:
     """Describe the latest workflow using its frozen configuration, not edited settings."""
@@ -195,4 +210,5 @@ def workflow(pid: str) -> dict:
         "review_id": repository.job_review_id(job["id"]) if job and job.get("id") else None,
         "stages": stages,
         "progress": progress,
+        "progress_quiet": _progress_quiet(job, progress),
     }

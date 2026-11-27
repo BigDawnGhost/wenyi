@@ -42,6 +42,7 @@ class Orchestrator:
         *,
         allow_glossary_notes: bool = False,
         mineru_token_resolver: Callable[[], str | None] | None = None,
+        workflow_run_id: str | None = None,
     ):
         """Assemble shared runtime and domain services without domain I/O."""
         self.config = config
@@ -57,7 +58,7 @@ class Orchestrator:
         )
         self._annotations = AnnotationService(self._runtime)
         self._translation = TranslationService(self._runtime, self._annotations)
-        self._review = ReviewService(self._runtime)
+        self._review = ReviewService(self._runtime, workflow_run_id=workflow_run_id)
         self._review_autofix = ReviewAutofixService(self._runtime, self._annotations)
         self._assembly = AssemblyService(self._runtime)
 

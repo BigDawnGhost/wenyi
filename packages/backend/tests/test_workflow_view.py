@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
 import pytest
@@ -96,3 +97,40 @@ def test_unrelated_progress_is_not_displayed(monkeypatch, backend_context, cache
     result = configuration.workflow("p")
     assert result["progress"] is None
     assert result["status"] == "queued"
+
+
+@pytest.mark.parametrize(
+    "status,run,seconds,quiet",
+    [
+        ("running", "current", 130, True),
+        ("running", "current", 1, False),
+        ("running", "older", 1, True),
+        ("running", None, 0, True),
+        ("queued", None, 0, False),
+        ("paused", "current", 130, False),
+    ],
+)
+def test_progress_silence_is_scoped_to_the_running_writer(
+    monkeypatch, backend_context, status, run, seconds, quiet
+):
+    now = datetime.now(timezone.utc)
+    job = {
+        "kind": "translation",
+        "status": status,
+        "run_id": "current",
+        "updated_at": (now - timedelta(minutes=3)).isoformat(),
+        "params": {"config_snapshot": {"pipeline": {}}},
+    }
+    progress = (
+        {
+            "project_id": "p",
+            "run_id": run,
+            "updated_at": (now - timedelta(seconds=seconds)).isoformat(),
+        }
+        if run
+        else None
+    )
+    monkeypatch.setattr(configuration, "require_project", lambda pid: {"id": pid})
+    backend_context.repository.latest_workflow_job.return_value = job
+    monkeypatch.setattr(backend_context.telemetry, "progress_snapshot", lambda pid: progress)
+    assert configuration.workflow("p")["progress_quiet"] is quiet

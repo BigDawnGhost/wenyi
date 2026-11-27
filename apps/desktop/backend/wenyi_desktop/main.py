@@ -10,6 +10,7 @@ import os
 import sqlite3
 import sys
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 
 import anyio
@@ -174,6 +175,14 @@ class DesktopServices:
             raise RuntimeError("Desktop workers have not started")
         return self.runtime.enqueue(name, **kwargs)
 
+    def notify_workflow_pause(self, run_id: str) -> None:
+        if (runtime := self.runtime) is not None:
+            runtime.notify_pause(run_id)
+
+    def begin_shutdown(self) -> None:
+        if self.runtime is not None:
+            self.runtime.begin_shutdown()
+
     def progress_snapshot(self, pid):
         return progress_snapshot(self.backend, self.runtime, pid)
 
@@ -261,7 +270,15 @@ def create_context(
     credentials = credentials or CredentialStore(backend.workspace, vault_factory=system_keyring)
     if credentials.database != backend.database:
         raise ValueError("Desktop credentials must belong to the selected data root")
-    services = DesktopServices(backend)
+    return assemble_context(backend, credentials, DesktopServices(backend), api_token)
+
+
+def assemble_context(
+    backend: LocalBackend,
+    credentials: CredentialStore,
+    services: DesktopServices,
+    api_token: str | None = None,
+) -> BackendContext:
     return BackendContext(
         repository=backend,
         settings_store=DesktopSettings(backend, credentials),
@@ -274,6 +291,7 @@ def create_context(
         connection_credential=credentials.resolve,
         babeldoc_connection=services.babeldoc.connection,
         run_workflow_sync=run_workflow_sync,
+        notify_workflow_pause=services.notify_workflow_pause,
         enqueue=services.enqueue,
         data_dir=str(paths.projects(backend.workspace)),
         project_dir=lambda pid: str(backend.project_dir(pid)),
@@ -329,6 +347,7 @@ def create_app(
     library_root: str | Path | None = None,
     install_root: str | Path | None = None,
     engine_diagnostics: EngineDiagnostics | None = None,
+    isolate_workflows: bool = False,
 ):
     verify_version_handshake()
 
@@ -365,8 +384,16 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app):
         with use_context(context), scope(diagnostics):
+            if isolate_workflows:
+                from .workflow_child import workflow_supervisor
+
+                runtime_context = replace(
+                    context, run_workflow_process=workflow_supervisor(context, diagnostics)
+                )
+            else:
+                runtime_context = context
             with lifecycle.observe("runtime"):
-                runtime = LocalRuntime(backend, context, diagnostics=diagnostics)
+                runtime = LocalRuntime(backend, runtime_context, diagnostics=diagnostics)
             services.runtime = runtime
             try:
                 with lifecycle.observe("runtime"):

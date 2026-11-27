@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from contextlib import nullcontext
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from psycopg import Connection
 from psycopg.types.json import Jsonb
@@ -129,25 +129,27 @@ def set_project_status(
         )
 
 
-def request_pause(pid: str, run_id: str) -> bool:
+def request_pause(pid: str, run_id: str) -> Literal["paused", "pausing"] | None:
     """Lock only the catalog row, never wait for the long-running domain lock."""
     with _conn() as connection:
         project = connection.execute(
             "SELECT status FROM projects WHERE id=%s FOR UPDATE", (pid,)
         ).fetchone()
         if project is None or project[0] not in RUNNING_PROJECT_STATUSES:
-            return False
+            return None
         job = connection.execute(
-            """SELECT run_id,status FROM jobs
-               WHERE project_id=%s AND kind<>'export' ORDER BY id DESC LIMIT 1""",
+            """SELECT run_id,status,id FROM jobs
+               WHERE project_id=%s AND kind<>'export' ORDER BY id DESC LIMIT 1 FOR UPDATE""",
             (pid,),
         ).fetchone()
         if job is None or job[0] != run_id or job[1] not in {"queued", "running"}:
-            return False
-        connection.execute(
-            "UPDATE projects SET status='pausing',error=NULL,updated_at=now() WHERE id=%s", (pid,)
-        )
-        return True
+            return None
+        if job[1] == "queued":
+            set_job_status(job[2], "paused", connection=connection)
+            set_project_status(pid, "paused", connection=connection)
+            return "paused"
+        set_project_status(pid, "pausing", connection=connection)
+        return "pausing"
 
 
 def set_project_strategy(
@@ -279,10 +281,11 @@ def set_job_status(
     *,
     result: dict[str, Any] | None = None,
     expected_status: str | set[str] | None = None,
+    connection: Connection[Any] | None = None,
 ) -> bool:
     expected = [expected_status] if isinstance(expected_status, str) else expected_status
     states = list(expected) if expected is not None else None
-    with _conn() as c:
+    with _conn(connection) as c:
         row = c.execute(
             """UPDATE jobs SET status=%s, error=%s, result=COALESCE(%s,result),
                updated_at=now() WHERE id=%s AND (%s::text[] IS NULL OR status=ANY(%s))
@@ -290,6 +293,36 @@ def set_job_status(
             (status, error, Jsonb(result) if result is not None else None, job_id, states, states),
         ).fetchone()
     return row is not None
+
+
+def finish_workflow(
+    pid: str,
+    job_id: int,
+    status: str,
+    *,
+    expected_status: str,
+    project_status: str,
+    error: str | None,
+) -> bool:
+    with _conn() as conn:
+        # Serialize with pause/admission; take the project row before the job row.
+        conn.execute("SELECT id FROM projects WHERE id=%s FOR UPDATE", (pid,))
+        changed = conn.execute(
+            """UPDATE jobs SET status=%s,error=%s,updated_at=now()
+               WHERE id=%s AND project_id=%s AND kind<>'export' AND status=%s
+               RETURNING id""",
+            (status, error, job_id, pid, expected_status),
+        ).fetchone()
+        if not changed:
+            return False
+        latest = conn.execute(
+            "SELECT id FROM jobs WHERE project_id=%s AND kind<>'export' ORDER BY id DESC LIMIT 1",
+            (pid,),
+        ).fetchone()
+        if latest != (job_id,):
+            return False
+        set_project_status(pid, project_status, error=error, connection=conn)
+        return True
 
 
 _JOB_COLUMNS = (

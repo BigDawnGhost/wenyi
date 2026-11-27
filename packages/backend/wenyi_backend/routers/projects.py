@@ -236,11 +236,14 @@ async def assemble_output(pid: str) -> dict:
 @router.post("/{pid}/pause", response_model=Message)
 def pause(pid: str) -> dict:
     require_project(pid)
-    repository = current_context().repository
-    job = next((row for row in repository.list_jobs(pid) if row["kind"] != "export"), None)
-    if job is None or not repository.request_pause(pid, job["run_id"]):
+    context = current_context()
+    job = context.repository.latest_workflow_job(pid)
+    status = context.repository.request_pause(pid, job["run_id"]) if job else None
+    if not status:
         raise HTTPException(409, "Project has no active task to pause")
-    return {"message": "pausing"}
+    if status == "pausing" and job and context.notify_workflow_pause is not None:
+        context.notify_workflow_pause(job["run_id"])
+    return {"message": status}
 
 
 @router.post("/{pid}/resume", response_model=JobEnqueued)

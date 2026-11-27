@@ -9,7 +9,7 @@ from typing import cast
 
 from fastapi import APIRouter, HTTPException
 
-from ..context import BackendStorage
+from ..context import BackendStorage, current_context
 from ..errors import CHAPTER_NOT_FOUND, SEGMENT_NOT_FOUND, ApiError
 from ..review_presentation import review_items
 from ..schemas import (
@@ -49,6 +49,41 @@ def _review_run(storage, rid: str) -> dict:
     }
 
 
+def _reconcile_running(pid: str, runs: list[dict]) -> None:
+    """A killed writer cannot update its review artifact. Project the owning job on read."""
+    repository = current_context().repository
+    legacy = {}
+
+    def apply(run: dict, job: dict | None) -> None:
+        if (
+            job
+            and job["project_id"] == pid
+            and job["kind"] in {"translation", "chapter_translation", "review"}
+            and job["status"] in {"paused", "interrupted", "error"}
+        ):
+            run["status"] = job["status"]
+            run["result"] = {**run["result"], "status": job["status"]}
+
+    for run in runs:
+        if run["status"] != "running":
+            continue
+        owner = run["result"].get("workflow_run_id")
+        if isinstance(owner, str):
+            apply(run, repository.get_job_by_arq_id(owner))
+        else:
+            legacy[run["id"]] = run
+    if legacy:
+        # Older artifacts have only scoped Review events. The newest matching
+        # invocation wins, including a live resume of a previously paused Review.
+        for job in repository.list_jobs(pid):
+            if job["kind"] in {"translation", "chapter_translation", "review"}:
+                rid = repository.job_review_id(job["id"])
+                if rid in legacy:
+                    apply(legacy.pop(rid), job)
+                    if not legacy:
+                        break
+
+
 @router.post("/run", response_model=JobEnqueued)
 async def run_ai_review(pid: str, body: ReviewRunRequest | None = None) -> dict:
     require_project(pid)
@@ -70,7 +105,9 @@ def list_runs(pid: str) -> list[dict]:
             for key in storage.list_artifacts("reviews/")
             if re.fullmatch(r"reviews/review-[A-Za-z0-9_-]+/result\.json", key)
         }
-        return [_review_run(storage, rid) for rid in sorted(ids, reverse=True)]
+        runs = [_review_run(storage, rid) for rid in sorted(ids, reverse=True)]
+    _reconcile_running(pid, runs)
+    return runs
 
 
 @router.get("/runs/{rid}", response_model=ReviewRun)
@@ -79,6 +116,7 @@ def get_run(pid: str, rid: str) -> dict:
     with closing(storage_for(pid)) as storage, storage.state_lock():
         run = _review_run(storage, rid)
         run["items"] = review_items(storage, rid, run["result"], run["autofix"])
+    _reconcile_running(pid, [run])
     return run
 
 

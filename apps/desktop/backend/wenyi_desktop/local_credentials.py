@@ -82,13 +82,16 @@ class CredentialStore:
         *,
         vault=None,
         vault_factory: Callable | None = None,
+        session: dict[str, str] | None = None,
     ):
         self.database = paths.catalog(workspace.resolve())
-        catalog.initialize(self.database)
         self._vault = vault
         self._vault_factory = vault_factory
         self._lock = RLock()
-        self._session: dict[str, str] = {}
+        self._session = dict(session or {})
+        if session is not None:
+            return  # The owner already initialized the tables before handing over volatile keys.
+        catalog.initialize(self.database)
         with self._connection() as conn:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS desktop_credentials "
@@ -334,6 +337,11 @@ class CredentialStore:
         """Forget volatile keys without touching persistent OS credentials."""
         with self._lock:
             self._session.clear()
+
+    def session_snapshot(self) -> dict[str, str]:
+        """Share volatile keys with an owned writer over its private bootstrap pipe."""
+        with self._lock:
+            return self._session.copy()
 
     def _discard(self, record: dict) -> None:
         reference = record.get("reference")

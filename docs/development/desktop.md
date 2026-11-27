@@ -218,11 +218,12 @@ snapshot are recorded before dispatch; rejected admission is compensated.
 Conflicting writes to the same project remain mutually exclusive.
 
 Each invocation owns an async supervisor and a
-[private single-thread executor](../../apps/desktop/backend/wenyi_desktop/local_runtime.py#L188).
-Copy context into that thread. Do not substitute a shared fixed workflow pool:
-the default executor must remain available for control requests and snapshots.
+[private writer process](../../apps/desktop/backend/wenyi_desktop/workflow_child.py#L59).
+The process opens the admitted catalog and project store and relays progress and
+diagnostics to the engine on a private pipe. Session credentials travel only in
+the private bootstrap pipe and are never persisted or passed on the command line.
 There is no Desktop workflow-count admission cap; this does not promise unlimited
-memory, threads, throughput or provider quota. Per-client limits and retry policy
+memory, processes, throughput or provider quota. Per-client limits and retry policy
 still apply, and shared credentials do not create an account-wide limiter.
 Exports retain their separate bounded queue and two consumers; telemetry is bounded.
 
@@ -232,12 +233,15 @@ status alone does not mean the runtime is idle.
 
 1. Register ownership before scheduling; duplicate dispatch of an owned or terminal
    run must not execute it again.
-2. Give each run its own client, stop signal and storage. One run's pause/failure,
-   including thread-allocation failure, must not cancel sibling projects.
-3. On timeout or shutdown, request cancellation once per worker. The
-   [shared cancellation contract](web.md#workflow-cancellation) keeps the run
-   owned until its writer exits. Neither the dispatcher nor the supervisor
-   abandons a writer, even if cancellation is requested again.
+2. Give each run its own client and storage. One run's pause or failure,
+   including process launch failure, must not cancel sibling projects.
+3. On pause, timeout or shutdown, terminate the owned writer process and
+   wait for it to exit, not for a final save. After committing a pause, the
+   API wakes the supervisor for that run. The supervisor also checks the
+   catalog once so a pause committed before it registered cannot be lost.
+   A native shutdown command closes workflow admission and signals the
+   writers before the HTTP server drains its connections. See the
+   [shared cancellation contract](web.md#workflow-cancellation).
 4. Stop admission before draining. Accepted work that has not entered execution
    becomes interrupted/resumable without starting model work; handle cancellation
    before the worker's first instruction as well.
@@ -248,10 +252,9 @@ status alone does not mean the runtime is idle.
 6. After a crash, recover orphaned jobs into resumable/error state as appropriate;
    do not automatically restart all interrupted work.
 
-Python threads are not forcibly killed; a thread that has not stopped remains owned.
-The native host can terminate an unresponsive child process after its grace period.
-That is forced recovery, not evidence that checkpoints were flushed; retain WAL and
-apply the usual interrupted-run recovery on the next start.
+The native host can still terminate an unresponsive engine after its grace period.
+A lost supervisor pipe tells the writer to exit. Retain WAL and apply normal
+interrupted-run recovery; neither process exit guarantees a final checkpoint.
 
 Hiding/minimizing the window is not shutdown. Background activity suppresses periodic
 UI work while leaving the engine and progress subscription alive. Restoring reconciles

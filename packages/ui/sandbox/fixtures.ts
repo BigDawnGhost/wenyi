@@ -110,6 +110,7 @@ export const workflow = {
     { id: "annotation_alignment", label: "annotation_alignment", enabled: false },
   ],
   progress: null,
+  progress_quiet: false,
 } satisfies Output<"WorkflowOut">;
 const modelOperations = [
   { id: "translation.body", description: "Translate paragraphs" },
