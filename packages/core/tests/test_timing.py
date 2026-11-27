@@ -1,5 +1,7 @@
 """Invocation timing, resume accounting and stage-independent CLI clocks."""
 
+import os
+import stat
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -71,6 +73,38 @@ def test_timing_write_failure_preserves_previous_ledger_and_original_error(tmp_p
             raise RuntimeError("workflow failed")
     assert load_timing(store.run_dir) == before
     assert not list(Path(store.run_dir).glob("*.tmp"))
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Unix file permission bits")
+def test_timing_ledger_is_private_on_first_write_and_update(tmp_path):
+    store = RunStore(str(tmp_path))
+    path = tmp_path / "timing.json"
+    previous_umask = os.umask(0o022)
+    try:
+        for run_id in ("first", "second"):
+            store.record_timing({"id": run_id, "elapsed_seconds": 5.0})
+            assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    finally:
+        os.umask(previous_umask)
+
+
+def test_initialization_does_not_interrupt_timing_publication(tmp_path, monkeypatch):
+    timing = RunStore(str(tmp_path))
+    initializing = RunStore(str(tmp_path))
+    real_replace = os.replace
+
+    def interleave_at_timing_replace(temporary, target):
+        if os.path.basename(target) == "timing.json":
+            with initializing.lock():
+                initializing.begin_initialization("a" * 64)
+            assert Path(temporary).is_file()
+        real_replace(temporary, target)
+
+    monkeypatch.setattr(os, "replace", interleave_at_timing_replace)
+    record = {"id": "first", "elapsed_seconds": 5.0}
+    timing.record_timing(record)
+
+    assert load_timing(timing.run_dir) == {"runs": [record], "total_seconds": 5.0}
 
 
 def test_concurrent_timing_writers_do_not_lose_invocations(tmp_path):

@@ -15,6 +15,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from .storage.atomic_write import write_text_atomic
+from .storage.io_path import to_io_path
 
 _observer: ContextVar[Callable[[RunTimer], None] | None] = ContextVar(
     "timing_observer", default=None
@@ -41,7 +42,7 @@ def format_duration(seconds: float) -> str:
 def load_timing(run_dir: str) -> dict[str, Any] | None:
     """Read the last committed timing ledger without creating state."""
     try:
-        with open(os.path.join(run_dir, "timing.json"), encoding="utf-8") as handle:
+        with open(to_io_path(os.path.join(run_dir, "timing.json")), encoding="utf-8") as handle:
             return json.load(handle)
     except FileNotFoundError:
         return None
@@ -56,12 +57,10 @@ def save_timing(run_dir: str, record: dict[str, Any]) -> dict[str, Any]:
         "total_seconds": sum(run["elapsed_seconds"] for run in runs.values()),
         "runs": list(runs.values()),
     }
-    # The ledger is one more run-directory writer, so it publishes through the
-    # same temporary namespace as every other state file; a sweep can then tell
-    # its leftover apart from a file a person named.
     write_text_atomic(
         os.path.join(run_dir, "timing.json"),
         json.dumps(ledger, ensure_ascii=False, indent=2) + "\n",
+        mode=0o600,
     )
     return ledger
 
