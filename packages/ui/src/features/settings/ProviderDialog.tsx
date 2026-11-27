@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type FormEvent } from "react";
+import { useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import type { Capabilities, GlobalConfig } from "../../api/types";
 import { Button } from "../../components/ui/button";
@@ -33,9 +33,8 @@ function rowsFor(llm: Document, id: string): ModelRow[] {
     .map(([ref, raw], key) => ({ key, original: ref, ...splitModelRef(ref), params: object(raw) }));
 }
 
-export function ProviderDialog({ initial, capabilities, draftLlm, returnFocus, onClose, onSave }: {
+export function ProviderDialog({ initial, capabilities, returnFocus, onClose, onSave }: {
   initial: EditorBase;
-  draftLlm: Document;
   capabilities?: Capabilities;
   returnFocus: () => HTMLElement | null;
   onClose: () => void;
@@ -104,6 +103,16 @@ export function ProviderDialog({ initial, capabilities, draftLlm, returnFocus, o
     && rows.length === Object.keys(models).length - Object.keys(otherModels).length
     && rows.every(({ original, model, provider: connection, params }) =>
       original === `${connection}/${model}` && params === models[original]);
+  const probeModels = useMemo(() => Object.fromEntries(rows
+    .filter(row => row.provider === id && row.model.trim())
+    .map(row => [row.model.trim(), row.params])), [rows, id]);
+  const probeDraft = useMemo(() => ({
+    connection: storedConnection ?? null,
+    draft_id: name,
+    provider,
+    models: probeModels,
+    api_key: edit?.trim() ?? null,
+  }), [storedConnection, name, provider, probeModels, edit]);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (name !== id && Object.hasOwn(providers, name))
@@ -184,7 +193,8 @@ export function ProviderDialog({ initial, capabilities, draftLlm, returnFocus, o
                 value={String(provider.api_key_env ?? "")}
                 onChange={e => patchProvider({ api_key_env: e.target.value || null })} />} />
           )}
-          {!creating && <ModelConnectivity connection={id} saved={unchanged && edit === undefined} disabled={saving} />}
+          <ModelConnectivity draft={probeDraft}
+            disabled={saving || !new RegExp(`^${idPattern}$`).test(name) || name.length > 200} />
           </Card>
         </section>
         <section aria-labelledby={`${form}-models`} className="space-y-3">
@@ -197,8 +207,7 @@ export function ProviderDialog({ initial, capabilities, draftLlm, returnFocus, o
           <Card className="divide-y divide-border">
           {!rows.length && <p className="px-4 py-3 text-sm text-muted-foreground">{t("connectivity.none")}</p>}
           {rows.map(row => {
-            const inUse = row.original !== undefined &&
-              (isModelReferenced(llm, row.original) || isModelReferenced(draftLlm, row.original));
+            const inUse = row.original !== undefined && isModelReferenced(llm, row.original);
             const connection = row.provider;
             const adapter = connection === id ? provider : object(providers[connection]);
             return (

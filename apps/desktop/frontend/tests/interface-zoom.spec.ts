@@ -88,16 +88,31 @@ test("shows percentage choices in Chinese", async ({ page }) => {
 });
 
 test("applies local zoom and resets immediately while offline", async ({ page, context }) => {
-  await setup(page);
+  // Hold unrelated settings modules until the browser loses its connection.
+  let release!: () => void;
+  const offline = new Promise<void>(resolve => { release = resolve; });
+  const backgroundLoads: string[] = [];
+  await page.route("**/src/{DesktopUpdates,BabeldocPlugin,MinerUCredential}.tsx*", async route => {
+    backgroundLoads.push(new URL(route.request().url()).pathname);
+    await offline;
+    await route.continue();
+  });
+
   const zoom = page.getByRole("combobox", { name: "Interface zoom" });
-  await expect(zoom).toHaveText("100%");
-  await context.setOffline(true);
+  try {
+    await setup(page);
+    await expect(zoom).toHaveText("100%");
+    await context.setOffline(true);
+  } finally {
+    release();
+  }
   await zoom.click();
   await page.getByRole("option", { name: "125%", exact: true }).click();
   await expect(zoom).toHaveText("125%");
   await page.keyboard.press("Control+0");
   await expect(zoom).toHaveText("100%");
   expect(await page.evaluate(() => sessionStorage.getItem("mock.zoom.saved"))).toBe("100");
+  expect(backgroundLoads).toEqual([]);
 });
 
 test("a failed read offers an offline retry without claiming a default zoom", async ({ page, context }) => {

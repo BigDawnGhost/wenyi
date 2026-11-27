@@ -57,7 +57,7 @@ def test_engine_listener_accepts_low_latency_tcp_connections(tmp_path, monkeypat
             self.started = True
 
     monkeypatch.setattr(uvicorn, "Server", Server)
-    monkeypatch.setattr(desktop, "watch_parent", lambda server: None)
+    monkeypatch.setattr(desktop, "watch_parent", lambda shutdown: None)
     monkeypatch.setattr(
         main,
         "create_app",
@@ -67,6 +67,53 @@ def test_engine_listener_accepts_low_latency_tcp_connections(tmp_path, monkeypat
     )
     asyncio.run(desktop.serve(tmp_path, io.StringIO(), EngineDiagnostics(None)))
     assert len(observed) == 1 and observed[0] != 0
+
+
+def test_parent_shutdown_signals_writers_before_http_server_returns(tmp_path, monkeypatch):
+    import uvicorn
+    from wenyi_desktop import desktop, main
+    from wenyi_desktop.diagnostics import EngineDiagnostics
+
+    async def exercise():
+        writers_stopping = asyncio.Event()
+        request_shutdown = asyncio.get_running_loop().create_future()
+        loop = asyncio.get_running_loop()
+
+        class Server:
+            started = False
+            should_exit = False
+
+            def __init__(self, config):
+                pass
+
+            async def serve(self, *, sockets):
+                shutdown = await request_shutdown
+                shutdown()
+                # Stand in for pending connections which must drain after the signal.
+                await asyncio.wait_for(writers_stopping.wait(), 2)
+                assert self.should_exit
+
+        monkeypatch.setattr(uvicorn, "Server", Server)
+        monkeypatch.setattr(
+            desktop,
+            "watch_parent",
+            lambda shutdown: loop.call_soon_threadsafe(request_shutdown.set_result, shutdown),
+        )
+        monkeypatch.setattr(
+            main,
+            "create_app",
+            lambda *args, **kwargs: SimpleNamespace(
+                state=SimpleNamespace(
+                    backend=SimpleNamespace(
+                        repository=MagicMock(),
+                        telemetry=SimpleNamespace(begin_shutdown=writers_stopping.set),
+                    )
+                )
+            ),
+        )
+        await desktop.serve(tmp_path, io.StringIO(), EngineDiagnostics(None))
+
+    asyncio.run(exercise())
 
 
 @pytest.mark.parametrize("transport", ["http", "websocket"])

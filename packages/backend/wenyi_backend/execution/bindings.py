@@ -26,6 +26,7 @@ def build_workflow(
     storage: Storage,
     *,
     mineru_token_resolver: Callable[[], str | None] | None = None,
+    workflow_run_id: str | None = None,
 ) -> WorkflowRunner:
     """Bind one workflow runner; the only module that names the orchestration class."""
     return Orchestrator(
@@ -34,6 +35,7 @@ def build_workflow(
         storage=storage,
         allow_glossary_notes=True,
         mineru_token_resolver=mineru_token_resolver,
+        workflow_run_id=workflow_run_id,
     )
 
 

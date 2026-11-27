@@ -5,6 +5,22 @@ from typing import Any, Protocol
 
 class JobRepository(Protocol):
     def get_job_by_arq_id(self, arq_job_id: str) -> dict | None: ...
+    def finish_workflow(
+        self,
+        pid: str,
+        job_id: int,
+        status: str,
+        *,
+        expected_status: str,
+        project_status: str,
+        error: str | None,
+    ) -> bool:
+        """CAS the job; commit project status in the same transaction iff it is latest.
+
+        Return True only if this call published the project outcome.
+        """
+        ...
+
     def set_job_status(
         self,
         job_id: int,

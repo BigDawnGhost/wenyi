@@ -232,9 +232,8 @@ for (const locale of ["en", "zh-CN"] as const) {
           name: t("settings.advancedYamlConfiguration"),
           exact: true,
         }).fill("{}");
-        await expect(page.getByText(t("settings.unsavedSummary"), { exact: true })).toBeVisible();
         await expect(page.getByRole("button", {
-          name: t("settings.validateConfiguration"),
+          name: t("settings.applyYaml"),
           exact: true,
         })).toBeEnabled();
       }

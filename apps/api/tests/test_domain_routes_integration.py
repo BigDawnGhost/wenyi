@@ -57,6 +57,30 @@ def test_review_run_listing_and_sparse_segment_mapping(domain_client, tmp_path):
     assert queued[-1] == {"pid": storage.project_id, "kind": "review", "params": {"autofix": False}}
 
 
+def test_review_history_uses_its_owner_without_rewriting_checkpoints(domain_client):
+    client, storage, _ = domain_client
+    pid = storage.project_id
+    root = f"/projects/{pid}/review/runs"
+    legacy = {"review_id": "review-legacy", "status": "running"}
+    key = "reviews/review-legacy/result.json"
+    dal.create_job(pid, "review", "old", run_id="old", status="paused")
+    storage.log_event("review_started", review_id="review-legacy")
+    storage.write_artifact(key, legacy)
+    dal.create_job(pid, "review", "unrelated", run_id="unrelated", status="running")
+    assert client.get(root + "/review-legacy").json()["status"] == "paused"
+    # An active resume of the same review wins over its older terminal owner.
+    storage.log_event("review_started", review_id="review-legacy")
+    assert client.get(root + "/review-legacy").json()["status"] == "running"
+    assert storage.read_artifact(key) == legacy
+
+    other = dal.create_project("Other", "en", "zh", {})
+    dal.create_job(other, "review", "other-run", run_id="other-run", status="paused")
+    storage.write_artifact(
+        "reviews/review-imported/result.json", {"status": "running", "workflow_run_id": "other-run"}
+    )
+    assert {row["status"] for row in client.get(root).json()} == {"running"}
+
+
 def test_human_translation_and_style_writes_obey_busy_guard(domain_client, tmp_path):
     client, storage, _ = domain_client
     initialize(storage, tmp_path)

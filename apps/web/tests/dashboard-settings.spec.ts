@@ -48,14 +48,13 @@ test("settings category links survive reload and unknown categories fall back to
     const destination = title === "General" ? "/settings" : `/settings/${path}`;
     await expect(page).toHaveURL(destination);
     await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Save configuration", exact: true })).toBeVisible();
     await expect(page.getByRole("navigation", { name: "Settings navigation" })).toBeVisible();
     await page.reload();
     await expect(page).toHaveURL(destination);
   }
 });
 
-test("structured, model name and YAML drafts survive category switches", async ({ page }) => {
+test("saved changes and YAML drafts survive category switches", async ({ page }) => {
   await fakeApi(page);
   const saved = await saveProviderSettings(page);
   await page.goto("/settings/workflow");
@@ -65,7 +64,7 @@ test("structured, model name and YAML drafts survive category switches", async (
   await page.getByLabel("Model name", { exact: true }).fill("pending_model");
   await page.getByRole("button", { name: "Save provider" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  expect(saved().effective.pipeline.polish).toBe(true);
+  expect(saved().effective.pipeline.polish).toBe(false);
   await page.getByRole("link", { name: "Advanced", exact: true }).click();
   const yaml = page.getByRole("textbox", { name: "Advanced YAML configuration", exact: true });
   await expect(yaml).toBeVisible();
@@ -73,7 +72,7 @@ test("structured, model name and YAML drafts survive category switches", async (
   await yaml.fill(draft);
   await page.getByRole("link", { name: "Workflow", exact: true }).click();
   await expect(page.getByLabel("Polishing", { exact: true })).toBeDisabled();
-  await page.getByRole("link", { name: /Advanced YAML has unvalidated changes/ }).click();
+  await page.getByRole("link", { name: "Apply or discard your YAML changes in Advanced." }).click();
   await expect(page).toHaveURL("/settings/advanced");
   await expect(yaml).toHaveValue(draft);
   expect(draft).toContain('"deepseek/pending_model"');
