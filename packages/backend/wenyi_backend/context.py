@@ -38,6 +38,7 @@ from .ports.jobs import JobCatalog
 from .ports.projects import ProjectCatalog
 
 if TYPE_CHECKING:
+    from .execution.contracts import ExecutionRequest
     from .global_settings import GlobalSettings
 
 
@@ -170,8 +171,11 @@ class BackendContext:
     # A draft without a saved ID may use its environment, never another connection's key.
     connection_credential: Callable[[str | None, Any], str | None] | None = None
     babeldoc_connection: BridgeResolver | None = None
-    # Web retains its executor; Desktop owns a dedicated thread per workflow.
+    # In-process adapters (including injected test services) keep the synchronous dispatcher.
     run_workflow_sync: WorkflowDispatcher = asyncio.to_thread
+    # The host entry points supervise owned writer processes for durable workflows.
+    run_workflow_process: Callable[[ExecutionRequest], Awaitable[None]] | None = None
+    notify_workflow_pause: Callable[[str], None] | None = None
     metrics: Metrics = field(default_factory=Metrics)
     # Auth policy: with api_token set, bearer checks stay on unless the host
     # explicitly opted out. Default True keeps deployments fail-closed.

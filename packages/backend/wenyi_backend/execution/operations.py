@@ -60,7 +60,7 @@ def book_operation(
 ) -> str:
     if request.params.get("autofix") is not None:
         config.pipeline.review_autofix = request.params["autofix"]
-    orch = services.build_workflow(config, client, storage)
+    orch = services.build_workflow(config, client, storage, workflow_run_id=request.run_id)
     source = services.source_for(request.project_id)
     if request.kind == "prepare":
         orch.prepare_for_translation(source, progress=progress)

@@ -30,10 +30,12 @@ def _worker_entry(function):
 
 
 async def _run(kind: WorkflowKind, project_id: str, run_id: str | None, params: dict) -> None:
-    await runner.run(
-        ExecutionRequest(kind, project_id, run_id, params),
-        workflow_dependencies(current_context()),
-    )
+    context = current_context()
+    request = ExecutionRequest(kind, project_id, run_id, params)
+    if run_id and context.run_workflow_process is not None:
+        await context.run_workflow_process(request)
+    else:
+        await runner.run(request, workflow_dependencies(context))
 
 
 @_worker_entry
