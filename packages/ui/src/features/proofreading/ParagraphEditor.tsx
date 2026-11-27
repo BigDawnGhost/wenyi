@@ -250,7 +250,7 @@ export function ParagraphEditor({
         >
           <section className="min-w-0 space-y-3">
             <h3 className="text-sm font-medium">{t("common.source")}</h3>
-            <p lang={sourceLanguage} className={cn("whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]", bookTextFont(segment.source))}>
+            <p lang={sourceLanguage} className={cn("select-text whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]", bookTextFont(segment.source))}>
               {segment.source}
             </p>
           </section>

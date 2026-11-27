@@ -21,7 +21,7 @@ export function ReleaseNotes({ open, onClose, version, notes }: {
     >
       <div
         lang={locale}
-        className="space-y-4 break-words text-sm leading-relaxed
+        className="select-text space-y-4 break-words text-sm leading-relaxed
           [&_h1]:text-xl [&_h2]:text-lg [&_h3]:text-base
           [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold
           [&_h4]:font-semibold [&_h5]:font-semibold [&_h6]:font-semibold

@@ -1,5 +1,6 @@
 import { expect, test, type Locator } from "@playwright/test";
 import { fakeApi, pid } from "../../sandbox/fixtures";
+import { dragText, textPoint } from "./text-selection";
 
 async function expectInsetCloseButton(toast: Locator) {
   const close = toast.getByRole("button", { name: /close/i });
@@ -25,7 +26,8 @@ export const desktopHostSensitive = false;
 
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
 
-test("glossary options are selectable and failed saves stay readable over the dialog", async ({ page }, info) => {
+test("glossary options are selectable and failed saves stay copyable over the dialog", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await fakeApi(page, {}, apiOrigin);
   await page.route(`**/projects/${pid}/glossary/terms`, async route => {
     if (route.request().method() === "POST") {
@@ -49,8 +51,21 @@ test("glossary options are selectable and failed saves stay readable over the di
   await expect(dialog.getByRole("alert")).toContainText("Fixture save failed");
   const toast = page.locator("[data-sonner-toast]").filter({ hasText: "Fixture save failed" });
   await expect(toast).toBeInViewport();
-  await page.waitForTimeout(1600);
-  await expect(toast).toBeVisible();
+  await expect(toast).toHaveAttribute("data-mounted", "true");
+  const text = toast.getByText(/Fixture save failed$/);
+  expect(await dragText(text)).toContain("Fixture save failed");
+  await text.click(); // Clear the selection before starting a fresh gesture.
+  // Extend the gesture down past the notification onto the modal backdrop.
+  // Neither Sonner's downward swipe nor Radix's outside press should dismiss.
+  const start = await textPoint(text, "start");
+  const card = (await toast.boundingBox())!;
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(start.x, card.y + card.height + 8, { steps: 8 });
+  await expect(toast).toHaveAttribute("data-swiping", "false");
+  await page.mouse.up();
+  await expect(toast).toHaveAttribute("data-removed", "false");
+  await expect(dialog).toBeVisible();
   const close = await expectInsetCloseButton(toast);
   // The card passes clicks through; its close control must still sit above the modal.
   expect(await close.evaluate(element => {
@@ -62,11 +77,21 @@ test("glossary options are selectable and failed saves stay readable over the di
   await expect(toast).toHaveCount(0);
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole("alert")).toContainText("Fixture save failed");
+  const source = dialog.getByRole("textbox").first();
+  await source.click();
+  await expect(source).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Add term", exact: true })).toBeFocused();
   await page.getByRole("button", { name: "Add term", exact: true }).click();
   await expect(dialog.getByRole("alert")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(toast).toHaveAttribute("data-mounted", "true");
+  const reopenedCard = (await toast.boundingBox())!;
+  // A plain click on the card's padding is still a backdrop click.
+  await page.mouse.click(reopenedCard.x + 4, reopenedCard.y + reopenedCard.height / 2);
+  await expect(dialog).toHaveCount(0);
+  await expect(toast).toBeVisible();
 });
 
 for (const width of [1280, 420]) {

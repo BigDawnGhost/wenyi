@@ -1,6 +1,53 @@
 import { expect, test } from "@playwright/test";
 import type { ModelPingResult } from "@wenyi/ui/api/types";
 import { fakeApi, globalConfiguration } from "../../../packages/ui/sandbox/fixtures";
+import { dragText, selectedText, textPoint } from "../../../packages/ui/tests/e2e/text-selection";
+
+test("mouse selection copies connection failures, not table labels or status", async ({ page }) => {
+  await fakeApi(page);
+  const failure: ModelPingResult = {
+    profile: "deepseek/deepseek-flash",
+    connection: "deepseek",
+    provider: "deepseek",
+    model: "deepseek-flash",
+    endpoint: null,
+    operations: [],
+    ok: false,
+    category: "authentication_failed",
+    message: "Provider authentication failed. Check the API key.",
+    status_code: 401,
+    latency_ms: 210,
+  };
+  const fallback = "Upstream certificate could not be verified.";
+  await page.route("**/api/settings/models/ping/draft", route => route.fulfill({
+    json: [
+      failure,
+      { ...failure, profile: "deepseek/other", model: "other", category: "unknown_fixture_category",
+        message: fallback, status_code: null },
+      { ...failure, profile: "deepseek/connected", model: "connected", ok: true, category: "ok",
+        status_code: null },
+    ],
+  }));
+  await page.goto("/settings/providers");
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Test connection", exact: true }).click();
+  const table = dialog.getByRole("table");
+  for (const label of [
+    table.getByRole("columnheader", { name: "Detail" }),
+    table.getByText("Failed", { exact: true }).first(),
+    table.getByRole("cell", { name: "The model replied.", exact: true }),
+  ]) {
+    await label.scrollIntoViewIfNeeded();
+    const point = await textPoint(label, "middle");
+    await page.mouse.dblclick(point.x, point.y);
+    expect.soft(await selectedText(page)).toBe("");
+  }
+  for (const detail of ["Authentication failed. Check the API key. (HTTP 401)", fallback]) {
+    expect.soft(await dragText(table.getByRole("cell", { name: detail, exact: true }))).toBe(detail);
+  }
+  await expect(dialog).toBeVisible();
+});
 
 test("testing edited models uses the current draft without saving or closing", async ({ page }) => {
   const requests: unknown[] = [];
