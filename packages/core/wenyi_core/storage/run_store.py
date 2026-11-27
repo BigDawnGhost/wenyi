@@ -35,8 +35,8 @@ from ..ingest.source_hash import source_sha256
 from ..models.document import Chapter, Document
 from ..timing import save_timing
 from .artifacts import FileArtifacts
-from .atomic_write import sweep_temporary, write_text_atomic
-from .chapter_publication import JOURNAL_NAME, ChapterPublication
+from .atomic_write import write_text_atomic
+from .chapter_publication import JOURNAL_NAME, JOURNAL_TEMPORARY_PREFIX, ChapterPublication
 from .io_path import to_io_path
 from .locks import (
     ASSEMBLE_LOCK,
@@ -373,6 +373,9 @@ class RunStore(FileArtifacts):
             for path in (os.path.join(self.run_dir, "usage-pending.json"), self.usage_path):
                 self._remove(path)
 
+        # Reset derived state, including its abandoned staging files. Do not sweep
+        # the rest of the run: neither a filename nor these locks establish ownership
+        # of a source artifact or a file another lock domain is publishing.
         shutil.rmtree(to_io_path(self.chapters_dir), ignore_errors=True)
         os.makedirs(to_io_path(self.chapters_dir), exist_ok=True)
         for path in (
@@ -389,25 +392,11 @@ class RunStore(FileArtifacts):
             shutil.rmtree(to_io_path(self.reviews_dir), ignore_errors=True)
             self._remove(self.event_log_path)
 
-        # Every temporary file here belongs to an interrupted write of this run.
-        # The sweep runs after the derived state is discarded so a temporary file
-        # written before the crash cannot be mistaken for current state.
-        self.sweep_temporary_files()
         self._batch_glossary_event_cache = None
         self._write_json(
             self.initialization_path,
             {"source_sha256": source_hash},
         )
-
-    def sweep_temporary_files(self) -> list[str]:
-        """Delete temporary files left by an interrupted write in the run directory.
-
-        Only the names `write_text_atomic` produces and the legacy single
-        `<name>.tmp` form it replaced are removed. The run directory also holds
-        exported documents and cached sources, so matching every `*.tmp` would
-        eventually delete a file this program never wrote.
-        """
-        return sweep_temporary(self.run_dir)
 
     def finish_initialization(self) -> None:
         """Remove temporary initialization identity after the manifest commits successfully."""
@@ -651,7 +640,7 @@ class RunStore(FileArtifacts):
         return [
             key
             for key in super().list_artifacts(prefix)
-            if key != JOURNAL_NAME and not key.startswith(f"{JOURNAL_NAME}.")
+            if key != JOURNAL_NAME and not key.startswith(JOURNAL_TEMPORARY_PREFIX)
         ]
 
     def read_artifact_records(self, key: str) -> list[dict]:

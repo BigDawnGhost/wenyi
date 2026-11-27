@@ -165,6 +165,36 @@ def test_long_artifacts_support_read_write_list_records_and_delete(tmp_path):
     assert storage.list_artifacts(LONG_PREFIX) == []
 
 
+def test_artifact_with_215_byte_basename_can_be_written(tmp_path):
+    storage = FileArtifacts(str(tmp_path))
+    key = "a" * 210 + ".json"
+    storage.write_artifact(key, {"target": "published"})
+    assert storage.read_artifact(key) == {"target": "published"}
+
+
+def test_atomic_writer_skips_temporary_names_already_in_use(tmp_path, monkeypatch):
+    storage = FileArtifacts(str(tmp_path))
+    target = ".wenyi-" + "a" * 32 + ".tmp"
+    existing = ".wenyi-" + "b" * 32 + ".tmp"
+    storage.write_artifact(existing, {"target": "keep"})
+    nonces = iter("abc")
+    monkeypatch.setattr(
+        "wenyi_core.storage.atomic_write.uuid4", lambda: SimpleNamespace(hex=next(nonces) * 32)
+    )
+    real_replace = os.replace
+
+    def check_then_replace(source, destination):
+        assert not (tmp_path / target).exists()
+        assert storage.read_artifact(existing) == {"target": "keep"}
+        real_replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", check_then_replace)
+    storage.write_artifact(target, {"target": "new"})
+
+    assert storage.read_artifact(target) == {"target": "new"}
+    assert storage.list_artifacts() == [target, existing]
+
+
 def test_long_run_directory_can_resume_review(tmp_path):
     from wenyi_core.review.run_store import ReviewRunStore
 
