@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+import errno
 import io
 import json
 import logging
 import traceback
-import tracemalloc
 import unittest
-import zipfile
 from contextlib import ExitStack, closing
 from pathlib import Path
 from unittest.mock import patch
@@ -46,8 +45,8 @@ class StreamedResponse(httpx.Response):
     the downloader kept the whole body instead of writing it out.
     """
 
-    def __init__(self, chunks: list[bytes], **kwargs) -> None:
-        self.parts = _Parts(chunks)
+    def __init__(self, chunks: list[bytes], *, error: Exception | None = None, **kwargs) -> None:
+        self.parts = _Parts(chunks, error)
         kwargs["stream"] = self.parts
         super().__init__(**kwargs)
 
@@ -62,14 +61,21 @@ class StreamedResponse(httpx.Response):
 class _Parts(httpx.SyncByteStream):
     """A response stream that yields recorded parts and records how often it ran."""
 
-    def __init__(self, chunks: list[bytes]) -> None:
+    def __init__(self, chunks: list[bytes], error: Exception | None) -> None:
         self.chunks = chunks
+        self.error = error
         self.iterations = 0
+        self.closed = False
 
     def __iter__(self):
         for chunk in self.chunks:
             self.iterations += 1
             yield chunk
+        if self.error is not None:
+            raise self.error
+
+    def close(self):
+        self.closed = True
 
 
 @pytest.fixture
@@ -80,11 +86,13 @@ def fake_http(monkeypatch):
     with ExitStack() as stack:
 
         def install(handler):
-            def dispatch(request):
-                calls.append(request)
-                return handler(request)
+            class Transport(httpx.BaseTransport):
+                def handle_request(self, request):
+                    calls.append(request)
+                    return handler(request)
 
-            transport = httpx.MockTransport(dispatch)
+            # MockTransport eagerly reads request bodies before dispatching.
+            transport = Transport()
             anonymous = stack.enter_context(client_type(transport=transport))
             monkeypatch.setattr(httpx, "request", anonymous.request)
             monkeypatch.setattr(httpx, "stream", anonymous.stream)
@@ -630,8 +638,8 @@ def test_download_streams_the_result_body_to_disk(fake_http, tmp_path):
 
 
 def test_retried_upload_reopens_the_file_for_each_attempt(fake_http, tmp_path, monkeypatch):
-    """Every attempt streams from its own handle, so the retry sends the full body."""
-    payload = b"synthetic upload payload"
+    """Lose the connection after consuming only the first part of the file."""
+    payload = bytes(range(256)) * 1024
     source = tmp_path / "book.pdf"
     source.write_bytes(payload)
     attempts = []
@@ -650,9 +658,16 @@ def test_retried_upload_reopens_the_file_for_each_attempt(fake_http, tmp_path, m
         if request.method == "POST":
             return httpx.Response(200, json={"code": 0, "data": _upload_data()})
         if request.method == "PUT":
-            attempts.append(bytes(request.content))
-            if len(attempts) == 1:
-                raise httpx.ConnectError("reset")
+            assert "authorization" not in request.headers
+            assert "content-type" not in request.headers
+            assert request.headers["content-length"] == str(len(payload))
+            if not attempts:
+                first = next(iter(request.stream))
+                assert 0 < len(first) < len(payload)
+                attempts.append(first)
+                raise httpx.WriteError(_REFLECTED)
+            assert handles[0].closed
+            attempts.append(b"".join(request.stream))
             return httpx.Response(200)
         if request.url.host == "mineru.net":
             return httpx.Response(200, json={"data": _poll_data()})
@@ -662,93 +677,182 @@ def test_retried_upload_reopens_the_file_for_each_attempt(fake_http, tmp_path, m
     with closing(MinerUApi(_TOKEN)) as client:
         downloaded = client.submit_batch([str(source)], tmp_path)
 
-    assert attempts == [payload, payload]
+    first, retry = attempts
+    assert first == payload[: len(first)]
+    assert retry == payload
     assert len(handles) == 2 and all(handle.closed for handle in handles)
     assert [path.read_bytes() for path in downloaded] == [b"result ZIP"]
 
 
-def _synthetic_bundle(path, text, filler):
-    blocks = [
-        [
-            {
-                "type": "paragraph",
-                "content": {"paragraph_content": [{"type": "text", "content": text}]},
-            }
-        ]
-    ]
-    with ZipFile(path, "w", compression=zipfile.ZIP_STORED) as archive:
-        archive.writestr("book_content_list_v2.json", json.dumps(blocks))
-        archive.writestr("book/full.md", filler)
-    return path
+@pytest.mark.parametrize("recover", [True, False], ids=["retry-succeeds", "retry-exhausted"])
+def test_interrupted_download_restarts_without_stale_bytes_or_files(
+    fake_http, tmp_path, monkeypatch, caplog, recover
+):
+    caplog.set_level(logging.DEBUG)
+    source = tmp_path / "book.pdf"
+    _write_pdf(source)
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(mineru_api.tempfile, "tempdir", str(tmp_path))
+    payload = _bundle(_paragraph_block())
+    partial = _bundle(_paragraph_block(), padding=bytes(128 * 1024))[:-64]
+    assert len(partial) > len(payload)
+    responses = []
+    work_dirs = []
+    sleeps = []
+
+    def respond(request):
+        if request.method == "POST":
+            return httpx.Response(200, json={"code": 0, "data": _upload_data()})
+        if request.method == "PUT":
+            return httpx.Response(200)
+        if request.url.host == "mineru.net":
+            return httpx.Response(200, json={"data": _poll_data()})
+        assert "authorization" not in request.headers
+        (work,) = tmp_path.glob("mineru-chunks-*")
+        work_dirs.append(work)
+        if responses:
+            assert responses[-1].parts.closed
+            # Prove the first GET reached disk before disconnecting.
+            assert (work / "result-1.zip").read_bytes() == partial
+        if responses and recover:
+            response = StreamedResponse([payload], status_code=200, request=request)
+        else:
+            response = StreamedResponse(
+                [partial], status_code=200, request=request, error=httpx.ReadError(_REFLECTED)
+            )
+        responses.append(response)
+        return response
+
+    fake_http(respond)
+    monkeypatch.setattr(mineru_api, "_sleep", sleeps.append)
+    if recover:
+        with mineru_api.extract_pdf(str(source), api_token=_TOKEN) as results:
+            (result,) = results
+            assert result.read_bytes() == payload
+        assert sleeps == [1]
+        assert len(responses) == 2
+    else:
+        with pytest.raises(MinerUError, match="download failed.*3 attempts") as caught:
+            pdf_reader.read_pdf(str(source), "en", "zh", cache_dir=str(cache), api_token=_TOKEN)
+        _assert_safe(caught.value, caplog)
+        assert sleeps == [1, 2]
+        assert len(responses) == 3
+        assert not [path for path in cache.rglob("*") if path.is_file()]
+    assert all(response.parts.iterations == 1 and response.parts.closed for response in responses)
+    assert work_dirs and not any(path.exists() for path in work_dirs)
+    assert source.is_file()
 
 
-def _render_peak(filler, count, root):
-    """Render count synthetic bundles and report the on-disk size and traced peak."""
-    bundles = [
-        _synthetic_bundle(root / f"result-{index}.zip", f"Chunk {index}.", filler)
-        for index in range(count)
-    ]
-    total = sum(path.stat().st_size for path in bundles)
-    tracemalloc.start()
-    try:
-        render_mineru_results(bundles, root / "source.epub", title="Synthetic book", lang="en")
-        _, peak = tracemalloc.get_traced_memory()
-    finally:
-        tracemalloc.stop()
-    return total, peak
+def test_temporary_disk_full_during_download_has_safe_actionable_guidance(
+    fake_http, tmp_path, monkeypatch, caplog
+):
+    caplog.set_level(logging.DEBUG)
+    source = tmp_path / "book.pdf"
+    _write_pdf(source)
+    cache = tmp_path / "cache"
+    monkeypatch.setattr(mineru_api.tempfile, "tempdir", str(tmp_path))
+    writes = []
+    responses = []
+    original_open = Path.open
+
+    def open_file(path, mode="r", *args, **kwargs):
+        if path.name != "result-1.zip" or mode != "wb":
+            return original_open(path, mode, *args, **kwargs)
+
+        class FullDisk(io.BufferedWriter):
+            def write(self, data):
+                writes.append((path, data))
+                if self.tell():
+                    raise OSError(errno.ENOSPC, _REFLECTED, str(path))
+                return super().write(data)
+
+        return FullDisk(original_open(path, mode, buffering=0))
+
+    def respond(request):
+        if request.method == "POST":
+            return httpx.Response(200, json={"code": 0, "data": _upload_data()})
+        if request.method == "PUT":
+            return httpx.Response(200)
+        if request.url.host == "mineru.net":
+            return httpx.Response(200, json={"data": _poll_data()})
+        response = StreamedResponse([b"started", b"out of space"], status_code=200, request=request)
+        responses.append(response)
+        return response
+
+    monkeypatch.setattr(Path, "open", open_file)
+    fake_http(respond)
+    with pytest.raises(MinerUError, match="temporary.*disk space.*Free up space.*retry") as caught:
+        pdf_reader.read_pdf(str(source), "en", "zh", cache_dir=str(cache), api_token=_TOKEN)
+
+    _assert_safe(caught.value, caplog)
+    assert "mineru-chunks-" not in str(caught.value) + caplog.text
+    assert [data for _, data in writes] == [b"started", b"out of space"]
+    assert all(not path.parent.exists() for path, _ in writes)
+    (response,) = responses
+    assert response.parts.closed
+    assert not [path for path in cache.rglob("*") if path.is_file()]
 
 
-def test_render_peak_memory_does_not_follow_the_result_set(tmp_path):
-    """Rendering reads one archive at a time, so the peak tracks one chunk, not the book."""
-    filler = bytes(range(256)) * (10 * 1024)
-    small_root, large_root = tmp_path / "small", tmp_path / "large"
-    small_root.mkdir()
-    large_root.mkdir()
-    small_total, small_peak = _render_peak(filler, 2, small_root)
-    large_total, large_peak = _render_peak(filler, 8, large_root)
-
-    # Four times the result payload must not mean four times the resident archive data.
-    assert large_total >= small_total * 3.5
-    assert large_peak < large_total / 4
-    assert large_peak < small_peak * 2
-
-
-def test_render_reads_bundles_without_keeping_them_whole(tmp_path, monkeypatch):
-    """Only the chunk being rendered is open; earlier archives are already closed."""
-    filler = bytes(range(256)) * (2 * 1024)
-    bundles = [
-        _synthetic_bundle(tmp_path / f"result-{index}.zip", f"Chunk {index}.", filler)
-        for index in range(3)
-    ]
+@pytest.mark.parametrize(
+    ("count", "fail_at"),
+    [(1, None), (5, None), (5, 3)],
+    ids=["one-chunk", "five-chunks", "image-read-fails-mid-render"],
+)
+def test_render_opens_at_most_one_result_zip_at_a_time(tmp_path, monkeypatch, count, fail_at):
+    bundles = [tmp_path / f"result-{index}.zip" for index in range(1, count + 1)]
+    for index, path in enumerate(bundles, 1):
+        image = {"type": "image", "content": {"image_source": {"path": "figure.gif"}}}
+        with ZipFile(path, "w") as archive:
+            archive.writestr("book_content_list_v2.json", json.dumps([[_paragraph_block(), image]]))
+            archive.writestr("figure.gif", b"GIF89a" + bytes([index]))
     opened = []
-    closed = []
-    real_archive = ZipFile
+    open_counts = []
+    live = set()
+    image_reads = []
 
-    class TrackedArchive:
+    class TrackedArchive(ZipFile):
         def __init__(self, path):
-            self._archive = real_archive(path)
+            assert path in bundles  # Open the file, not an in-memory copy of the ZIP.
+            super().__init__(path)
             opened.append(path)
+            live.add(self)
+            open_counts.append(len(live))
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_exc):
-            self._archive.close()
-            closed.append(True)
-
-        def namelist(self):
-            return self._archive.namelist()
+        def close(self):
+            super().close()
+            live.discard(self)
 
         def read(self, name):
-            return self._archive.read(name)
+            data = super().read(name)
+            if name == "figure.gif":
+                assert self in live
+                image_reads.append(data[-1])
+                if len(image_reads) == fail_at:
+                    raise RuntimeError("interrupted image read")
+            return data
 
     monkeypatch.setattr("wenyi_core.ingest.mineru_epub.ZipFile", TrackedArchive)
     output = tmp_path / "source.epub"
-    render_mineru_results(bundles, output, title="Synthetic book", lang="en")
 
-    assert output.is_file()
-    assert opened == bundles
-    assert len(closed) == len(bundles)
+    def render():
+        render_mineru_results(bundles, output, title="Synthetic book", lang="en")
+
+    if fail_at is None:
+        render()
+        with ZipFile(output) as epub:
+            for index in range(1, count + 1):
+                assert epub.read(f"EPUB/images/image-{index}.gif") == b"GIF89a" + bytes([index])
+    else:
+        with pytest.raises(RuntimeError, match="interrupted image read"):
+            render()
+        assert not output.exists()
+
+    processed = fail_at or count
+    assert opened == bundles[:processed]
+    assert image_reads == list(range(1, processed + 1))
+    # Hold strong references so implicit finalization cannot satisfy the cleanup check.
+    assert not live
+    assert open_counts == [1] * processed
 
 
 def test_interrupted_conversion_leaves_no_reusable_cache(fake_http, tmp_path, monkeypatch):
