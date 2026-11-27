@@ -305,13 +305,15 @@ def test_pause_and_resume_parse_preserves_job_identity(api):
     )
     run_id = response.json()["job_id"]
     assert client.post(f"/projects/{pid}/pause").status_code == 200
-    execute_next(api)
+    # No worker slot is free. Cancelling an unclaimed run must not require delivery.
     assert must(dal.get_project(pid))["status"] == "paused"
     assert must(dal.get_job_by_arq_id(run_id))["status"] == "paused"
     assert client.get(f"/projects/{pid}").json()["error"] is None
     assert must(dal.get_job_by_arq_id(run_id))["error"] is None
     response = client.post(f"/projects/{pid}/resume")
     assert response.status_code == 200 and response.json()["kind"] == "parse"
+    execute_next(api)  # Late delivery of the cancelled run cannot claim the new run.
+    assert must(dal.get_job_by_arq_id(response.json()["job_id"]))["status"] == "queued"
     execute_next(api)
     assert must(dal.get_project(pid))["status"] == "uploaded"
 
@@ -341,6 +343,9 @@ def test_live_redis_queue_executes_persisted_parse_job(api, monkeypatch):
     from arq import create_pool
     from arq.connections import RedisSettings
     from arq.worker import Worker
+    from psycopg.conninfo import make_conninfo
+    from wenyi_api.adapters import create_context
+    from wenyi_api.workers import workflow_supervisor
 
     redis_url = os.environ.get("WENYI_TEST_REDIS_URL")
     if not redis_url:
@@ -361,6 +366,19 @@ def test_live_redis_queue_executes_persisted_parse_job(api, monkeypatch):
     )
     assert response.status_code == 200, response.text
 
+    repository = postgres_repository(current_context())
+    with repository.pool.connection() as connection:
+        search_path = must(connection.execute("SHOW search_path").fetchone())[0]
+    config = replace(
+        repository.settings,
+        database_url=make_conninfo(
+            os.environ["WENYI_TEST_DATABASE_URL"], options=f"-c search_path={search_path}"
+        ),
+    )
+    context = create_context(config)
+    postgres_repository(context)._pool = repository.pool
+    context = replace(context, run_workflow_process=workflow_supervisor(context))
+
     async def consume():
         redis = await create_pool(RedisSettings.from_dsn(redis_url))
         worker = Worker(
@@ -370,7 +388,7 @@ def test_live_redis_queue_executes_persisted_parse_job(api, monkeypatch):
             burst=True,
             handle_signals=False,
             poll_delay=0.01,
-            ctx={"backend": current_context()},
+            ctx={"backend": context},
         )
         try:
             await worker.async_run()

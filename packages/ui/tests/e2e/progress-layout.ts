@@ -287,6 +287,24 @@ for (const locale of ["en", "zh-CN"] as const) {
       await expect(panel.getByRole("status")).toContainText(t("common.running"));
     });
 
+    test("a quiet workflow keeps its last stage and offers pause rather than takeover", async ({ page }) => {
+      const apiBase = apiOrigin ?? "**/api";
+      await page.route(`${apiBase}/projects/${pid}`, route =>
+        route.fulfill({ json: { ...project, status: "translating" } }));
+      await page.route(`${apiBase}/projects/${pid}/workflow`, route =>
+        route.fulfill({ json: {
+          ...workflow, status: "running", progress_quiet: true,
+          progress: { project_id: pid, run_id: workflow.run_id, label: stage },
+        } }));
+      await page.goto(`/projects/${pid}`);
+      const status = page.getByRole("region", { name: t("workflowPanel.currentWorkflow") }).getByRole("status");
+      await expect(status).toContainText(stage);
+      await expect(status).toContainText(t("workflowPanel.noRecentProgress"));
+      await expect(status.getByRole("link", { name: t("common.eventLog") })).toHaveAttribute("href", `/projects/${pid}/events`);
+      await expect(page.getByRole("button", { name: t("progress.pause"), exact: true })).toBeEnabled();
+      await expect(page.getByRole("button", { name: t("progress.resumeTask") })).toHaveCount(0);
+    });
+
     test("long stage text wraps on narrow screens", async ({ page }) => {
       await page.setViewportSize({ width: 390, height: 844 });
       const longStage = `${stage} ${"chapter-with-a-long-name".repeat(12)}`;

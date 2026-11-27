@@ -18,7 +18,9 @@ from .migrations import run_migrations
 DEFAULT_POOL_MAX_SIZE = 16
 
 
-def init_pool(dsn: str, *, max_size: int = DEFAULT_POOL_MAX_SIZE) -> ConnectionPool[Any]:
+def init_pool(
+    dsn: str, *, max_size: int = DEFAULT_POOL_MAX_SIZE, migrate: bool = True
+) -> ConnectionPool[Any]:
     """Create an application-owned pool and initialize the schema transactionally.
 
     The pool serves only short request and state connections: workflow, export
@@ -28,6 +30,8 @@ def init_pool(dsn: str, *, max_size: int = DEFAULT_POOL_MAX_SIZE) -> ConnectionP
     pool = ConnectionPool(
         dsn, min_size=1, max_size=max_size, open=True, kwargs={"client_encoding": "UTF8"}
     )
+    if not migrate:
+        return pool
     try:
         with pool.connection() as conn:
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended('wenyi:schema',0))")

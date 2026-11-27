@@ -187,7 +187,7 @@ for (const mode of ["manual", "unconfigured"]) {
   });
 }
 
-test("validated YAML is still unsaved and prevents installation", async ({ page }) => {
+test("a YAML draft prevents installation until discarded", async ({ page }) => {
   await setup(page, "automatic", "ready");
   await page.getByRole("link", { name: "Advanced", exact: true }).click();
   const yaml = page.getByRole("textbox", { name: "Advanced YAML configuration" });
@@ -196,10 +196,9 @@ test("validated YAML is still unsaved and prevents installation", async ({ page 
   await page.getByRole("link", { name: "About", exact: true }).click();
   await expect(page.getByRole("button", { name: "Install and restart", exact: true })).toBeDisabled();
   await page.getByRole("link", { name: "Advanced", exact: true }).click();
-  await page.getByRole("button", { name: "Validate configuration", exact: true }).click();
-  await expect(page.getByText("Configuration is valid but not saved yet", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Discard changes", exact: true }).click();
   await page.getByRole("link", { name: "About", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Install and restart", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Install and restart", exact: true })).toBeEnabled();
 });
 
 test("Chinese update labels remain Desktop-only", async ({ page }) => {

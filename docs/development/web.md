@@ -171,9 +171,9 @@ retries this cleanup without regenerating exports.
 
 ### Workflow cancellation
 
-An execution timeout requests cooperative stop; retry backoff can wake early, but a synchronous provider call or checkpoint may still need to finish. The runner retains the workflow slot and waits for the writer even if cancellation is requested again. After 30 seconds it logs that the drain is still in progress; this is neither a completion deadline nor permission to mark the job `paused` or to reacquire the writer's run lock.
+Pausing a queued run commits it as paused immediately; late delivery cannot claim it. Each claimed workflow writes from a separate process. On pause, shutdown or execution timeout, the supervisor terminates its writer without asking it to save again and waits for exit before publishing. Only committed checkpoints carry over.
 
-Publish the terminal result only after the synchronous writer exits. Keep conflicting starts and edits blocked while a writer can still change checkpoints. Recheck the run identity before publishing to the project so a late outcome cannot overwrite a newer workflow. An unresponsive writer can keep its slot occupied until the owning process is stopped; that is not a clean pause.
+Keep conflicting starts and edits blocked while a writer can still change checkpoints. Job and project publication uses the [catalog transaction](architecture.md#execution-and-publication), not a second open of the book store. Review history uses the owning invocation's terminal status if the last Review checkpoint still says `running`; reading history never rewrites the checkpoint. The workflow view's `progress_quiet` flag means a running job has gone two minutes without an observed stage update; neither that flag nor a statistics heartbeat authorizes stopping or taking over a writer.
 
 ### Recovery is not a total-runtime timeout
 
@@ -181,7 +181,7 @@ Each worker starts an independent asynchronous recovery loop, so maintenance can
 
 1. Try the appropriate project or export session lock without blocking. If another worker holds it, leave the job alone.
 2. Re-read the job under that lock. For queued jobs, check the matching Redis queue before declaring delivery lost.
-3. Mark confirmed orphaned workflows `interrupted`; pause the project only if this is still its latest workflow. Resume continues the original task type and saved progress.
+3. Publish the writer's recorded outcome if present; otherwise mark the orphaned workflow `interrupted`. Only the latest workflow can change project status. Resume continues the original task type and saved progress.
 4. Mark orphaned export jobs and export records `error`; the user creates a new export.
 
 The two-minute age is a recovery-candidate threshold, not proof of failure and not a maximum legitimate run duration. Arq execution limits are separate from this recovery rule. Preserve the live-lock check when changing scheduling or recovery; a long model call can be healthy without updating the job row.
@@ -194,9 +194,9 @@ The two-minute age is a recovery-candidate threshold, not proof of failure and n
 
 | Metric | Meaning |
 |---|---|
-| `wenyi_tasks_total{status,code}` | Finished workflow tasks with `done`, `paused`, or `error` outcomes; excludes exports |
+| `wenyi_tasks_total{status,code}` | Finished workflow tasks with `done`, `paused`, `interrupted`, or `error` outcomes; excludes exports |
 | `wenyi_llm_retries_total{provider,reason}` | Actual retry waits, deduplicated by call ID and attempt; exhaustion notifications are not additional retries |
-| `wenyi_task_cancel_drains_total{outcome,bucket}` | Completed workflow cancellation drains by elapsed time bucket (`outcome="drained"`); an in-progress drain is not counted. Older Redis counters may retain historical `forced` samples. |
+| `wenyi_task_cancel_drains_total{outcome,bucket}` | Historical in-process cooperative cancellation drains; isolated workflows do not wait for a final save and do not emit this metric. |
 | `wenyi_queue_depth` | Admitted, queued workflow and export jobs from the PostgreSQL job catalog; excludes running jobs |
 
 API and workers must share a Redis database for counter visibility. Counters survive only as long as their Redis keys. Recent task/retry identities use a bounded 20,000-entry deduplication window, not an unlimited exactly-once history. Counter writes are best-effort and must not fail workflows. An unavailable counter store or job catalog returns HTTP 503 on scraping rather than a fabricated zero snapshot.

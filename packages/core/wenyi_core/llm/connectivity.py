@@ -9,13 +9,13 @@ from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from .configuration import LLMConfig
+from .configuration import LLMConfig, ModelConfig, ProviderConfig
 from .credentials import validate_credential
 from .errors import describe_provider_failure
 from .operations import require_operation
 from .registry import provider_spec
 from .retrying import EmptyResponseError, TruncatedResponseError
-from .routing import model_route, resolve_routes
+from .routing import ResolvedRoute, model_route, resolve_model, resolve_routes
 from .transport import RequestContext
 
 DEFAULT_PROBE_TIMEOUT = 30.0
@@ -72,7 +72,7 @@ def probe_connections(
     timeout: float = DEFAULT_PROBE_TIMEOUT,
 ) -> list[ProbeResult]:
     """Probe every profile reachable by ``operations``, including explicit fallbacks."""
-    return _probe_all(
+    return _probe_profiles(
         config,
         probe_targets(config, tuple(operations)),
         credentials=credentials,
@@ -93,7 +93,7 @@ def probe_profiles(
         if profile not in config.models:
             raise ValueError(f"Unknown model profile: {profile}")
     users = probe_targets(config, resolve_routes(config))
-    return _probe_all(
+    return _probe_profiles(
         config,
         {profile: users.get(profile, ()) for profile in selected},
         credentials=credentials,
@@ -101,9 +101,50 @@ def probe_profiles(
     )
 
 
-def _probe_all(
+def probe_draft_connection(
+    connection_id: str,
+    provider: ProviderConfig,
+    models: Mapping[str, ModelConfig],
+    *,
+    credentials: Mapping[str, str | None] | None = None,
+    timeout: float = DEFAULT_PROBE_TIMEOUT,
+) -> list[ProbeResult]:
+    """Probe only the draft profiles on one connection, without saving or resolving a workflow."""
+    provider_spec(provider.kind).validate_connection(provider)
+    targets = [
+        (
+            resolve_model(
+                _DEFAULT_PROBE_OPERATION,
+                f"{connection_id}/{model_name}",
+                provider,
+                model,
+                origin="probe",
+            ),
+            provider,
+            (),
+        )
+        for model_name, model in models.items()
+    ]
+    return _probe_all(targets, credentials=credentials, timeout=timeout)
+
+
+def _probe_profiles(
     config: LLMConfig,
     targets: Mapping[str, tuple[str, ...]],
+    *,
+    credentials: Mapping[str, str | None] | None,
+    timeout: float,
+) -> list[ProbeResult]:
+    prepared = []
+    for profile, operations in targets.items():
+        operation = operations[0] if operations else _DEFAULT_PROBE_OPERATION
+        route = model_route(config, operation, profile, origin="probe")
+        prepared.append((route, config.providers[route.provider], operations))
+    return _probe_all(prepared, credentials=credentials, timeout=timeout)
+
+
+def _probe_all(
+    targets: list[tuple[ResolvedRoute, ProviderConfig, tuple[str, ...]]],
     *,
     credentials: Mapping[str, str | None] | None,
     timeout: float,
@@ -124,25 +165,20 @@ def _probe_all(
         # map() yields in submission order, so completion order never reorders results.
         return list(
             pool.map(
-                lambda item: _probe(
-                    config, item[0], item[1], credentials=credentials, timeout=timeout
-                ),
-                targets.items(),
+                lambda item: _probe(*item, credentials=credentials, timeout=timeout),
+                targets,
             )
         )
 
 
 def _probe(
-    config: LLMConfig,
-    profile: str,
+    route: ResolvedRoute,
+    connection: ProviderConfig,
     operations: tuple[str, ...],
     *,
     credentials: Mapping[str, str | None] | None,
     timeout: float,
 ) -> ProbeResult:
-    operation = operations[0] if operations else _DEFAULT_PROBE_OPERATION
-    route = model_route(config, operation, profile, origin="probe")
-    connection = config.providers[route.provider]
     adapter_type = provider_spec(route.provider_kind).adapter_type()
     request_model = route.request_model()
     # Probe settings replace workflow retries and long generation timeouts for this call only.
@@ -157,7 +193,7 @@ def _probe(
 
     def result(ok: bool, category: str, message: str, **extra: Any) -> ProbeResult:
         return ProbeResult(
-            profile,
+            route.profile,
             route.provider,
             route.provider_kind,
             route.model,
@@ -176,8 +212,8 @@ def _probe(
         return result(False, "missing_credential", str(error))
 
     context = RequestContext(
-        operation=operation,
-        profile=profile,
+        operation=route.operation,
+        profile=route.profile,
         # Respect provider rules such as the minimum output size for thinking modes.
         max_tokens=adapter_type.output_limit(request_model.options, PROBE_OUTPUT_TOKENS, None),
         emit=lambda event, **data: None,

@@ -1,4 +1,5 @@
 import { useId } from "react";
+import { Link } from "react-router-dom";
 import { StatusBadge } from "../../components/StatusBadge";
 import { useI18n } from "../../i18n";
 import { useQuery } from "@tanstack/react-query";
@@ -96,6 +97,14 @@ export function WorkflowPanel({
                 </span>
               )}
             </p>
+            {active && workflow.progress_quiet && (
+              <p>
+                {tr("workflowPanel.noRecentProgress")}{" "}
+                <Link className="text-primary underline underline-offset-4" to={`/projects/${pid}/events`}>
+                  {tr("common.eventLog")}
+                </Link>
+              </p>
+            )}
           </>
         ) : (
           // Placeholder rather than nothing, so the card does not grow a row when

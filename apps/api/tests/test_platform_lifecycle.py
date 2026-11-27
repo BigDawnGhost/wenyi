@@ -36,7 +36,8 @@ def test_web_lifespans_start_and_close_only_their_own_pool(monkeypatch):
     sizes = []
     rebuilt = []
 
-    def initialize(dsn, *, max_size=None):
+    def initialize(dsn, *, max_size=None, migrate=True):
+        assert migrate
         pool = FakePool(dsn)
         pools.append(pool)
         sizes.append(max_size)
@@ -90,7 +91,8 @@ def test_worker_shutdown_stops_recovery_before_closing_its_pool(monkeypatch):
     pools, stopped = [], []
     rebuilt = []
 
-    def initialize(dsn, *, max_size=None):
+    def initialize(dsn, *, max_size=None, migrate=True):
+        assert migrate
         pool = FakePool(dsn)
         pools.append(pool)
         return pool
