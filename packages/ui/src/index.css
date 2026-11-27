@@ -5,8 +5,8 @@
 /* Selection is opt-in: a stray drag or double click must not select chrome
    (labels, headings, metrics, navigation, table cells, dialog copy), so the
    default is off. Copyable text opts in with the select-text utility on the
-   text or on a content-only container; form controls, reader paragraphs,
-   alerts and toasts keep their own selection without any component work. */
+   text or on a content-only container; form controls, reader paragraphs
+   and alerts keep their own selection without any component work. */
 body {
   user-select: none;
   -webkit-user-select: none;
@@ -18,9 +18,18 @@ body {
   select,
   [contenteditable="true"],
   [data-reader-text],
-  [role="alert"],
-  [data-sonner-toast]
+  [role="alert"]
 ) {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Hidden, collapsed and exiting notifications must not acquire new hit targets.
+   The adapter wraps text in inline spans so wrapped line ends remain transparent. */
+[data-sonner-toast][data-mounted="true"][data-visible="true"][data-removed="false"]:is([data-front="true"], [data-expanded="true"])
+  .notification-text {
+  pointer-events: auto;
+  cursor: text;
   user-select: text;
   -webkit-user-select: text;
 }

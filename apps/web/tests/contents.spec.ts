@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { chapter, fakeApi, pid, project } from "../../../packages/ui/sandbox/fixtures";
+import { dragText, selectedText, textPoint } from "../../../packages/ui/tests/e2e/text-selection";
 
 const longTitle =
   "A long title about rivers, mountains and regional traditions ".repeat(8);
@@ -65,6 +66,31 @@ async function mockContents(page: Page, state = serverState()) {
   });
   return state;
 }
+
+test("mouse selection copies actual titles while translation disables editing", async ({ page }) => {
+  const state = serverState();
+  state.status = "translating";
+  state.rows[1].title = "";
+  await mockContents(page, state);
+  await page.goto(`/projects/${pid}/contents`);
+
+  const rows = page.getByRole("list", { name: "Contents & titles" }).getByRole("listitem");
+  const edit = rows.first().getByRole("button", { name: "Edit title" });
+  await expect(edit).toBeDisabled();
+  for (const text of ["Untitled chapter", "No translation yet", "Original title", "Translated title", "Actions"]) {
+    const point = await textPoint(page.getByText(text, { exact: true }), "middle");
+    await page.mouse.dblclick(point.x, point.y);
+    expect.soft(await selectedText(page), text).toBe("");
+  }
+  const button = (await edit.boundingBox())!;
+  await page.mouse.dblclick(button.x + button.width / 2, button.y + button.height / 2);
+  expect(await selectedText(page)).toBe("");
+  for (const title of ["Opening", "开篇"]) {
+    expect.soft(await dragText(rows.first().getByText(title, { exact: true }))).toBe(title);
+  }
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(state.writes).toEqual([]);
+});
 
 for (const chinese of [false, true]) {
   test(`contents titles persist on the server and fit desktop windows in ${chinese ? "Chinese" : "English"}`, async ({

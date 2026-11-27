@@ -196,6 +196,7 @@ shared [stylesheet](../../packages/ui/src/index.css#L15):
 | `runtime-placeholder` | Desktop runtime pending/closing gate |
 | `route-placeholder` | Quiet in-content route gate |
 | `disclosure-summary`, `disclosure-chevron` | Native disclosure styling |
+| `notification-text` | Inline pointer targets for visible toast text |
 
 These are authoring conventions, not a claim that every dependency or older
 arbitrary utility is px-only. Keep shared theme tokens and reduced-motion behavior
@@ -205,9 +206,9 @@ Text selection is opt-in. The shared [stylesheet](../../packages/ui/src/index.cs
 disables selection on `body`, so chrome — labels, headings, metrics, navigation,
 table cells and dialog copy — cannot be picked up by a stray drag or double click.
 Text users copy opts in with the `select-text` utility on the text or on a
-content-only container; reader paragraphs (`data-reader-text`), alerts, toasts and
-form controls stay selectable without per-component work. Do not add `select-none`
-to individual chrome components; this rule replaces that pattern.
+content-only container; reader paragraphs (`data-reader-text`), alerts and form
+controls stay selectable without per-component work. Do not add `select-none` to
+individual chrome components; this rule replaces that pattern.
 
 ## Dialogs and global notifications
 
@@ -225,11 +226,13 @@ bottom and centered on the content pane, above dialogs/dropdowns, with usable cl
 controls. Async feedback does not follow the last clicked button; scrolling or
 unrelated clicks must not move it.
 
-Use the shared [toast adapter](../../packages/ui/src/lib/toast.ts#L5):
-success defaults to one second, errors/warnings to ten seconds and informational
-messages to five seconds. Callers can override duration where required. A notification
-does not replace actionable inline validation; for example, a form save failure
-remains visible in the open form after its toast expires.
+Use the shared [toast adapter](../../packages/ui/src/lib/toast.ts): it makes the
+title and description selectable without starting a dismissal swipe or closing an
+open dialog. Blank card areas and stack gaps pass clicks through; the close
+button stays interactive. Success defaults to one second, errors/warnings to ten
+seconds and informational messages to five seconds. Callers can override duration
+where required. A notification does not replace actionable inline validation;
+for example, a form save failure remains visible after its toast expires.
 
 ## Validation in both hosts
 
