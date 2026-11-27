@@ -25,7 +25,6 @@ test("project settings retain creation-time precision without a mode selector", 
   await expect(page.getByLabel("Polishing", { exact: true })).toBeDisabled();
   await expect(page.getByLabel("Parallel initial drafts (1–3)")).toHaveCount(0);
   await page.getByLabel("Whole-book review", { exact: true }).uncheck();
-  await page.getByRole("button", { name: "Save configuration", exact: true }).click();
   await expect(page.getByText("Project settings saved", { exact: true })).toBeVisible();
   expect(submitted?.pipeline.translation_mode).toBe("three_draft_synthesis");
   expect(submitted?.pipeline.polish).toBe(true);
@@ -139,8 +138,11 @@ test("project settings retain invalid inline YAML and prevent basic edits from o
     },
   });
   let submitted: typeof settings | undefined;
-  await page.route(`**/api/projects/${pid}/config/validate`, async (route) => {
-    submitted = JSON.parse(route.request().postDataJSON().yaml);
+  await page.route(`**/api/projects/${pid}/config`, async (route) => {
+    if (route.request().method() !== "PUT") return route.fallback();
+    const { yaml } = route.request().postDataJSON();
+    submitted = JSON.parse(yaml) as typeof settings;
+    if (submitted.segment.max_tokens_per_batch > 0) return route.fallback();
     return route.fulfill({
       status: 422,
       json: {
@@ -167,16 +169,21 @@ test("project settings retain invalid inline YAML and prevent basic edits from o
   await yaml.fill(invalid);
   await expect(page.locator('[id="route-translation.body"]')).toBeDisabled();
   await expect(page.getByLabel("Polishing", { exact: true })).toBeDisabled();
-  await page.getByRole("link", { name: /Advanced YAML has unvalidated changes/ }).click();
-  await expect(page).toHaveURL(`/projects/${pid}/settings#advanced-yaml`);
-  await expect(yaml).toBeInViewport();
-  await expect(yaml).toHaveValue(invalid);
+  expect(submitted).toBeUndefined();
   await page
-    .getByRole("button", { name: "Validate configuration", exact: true })
+    .getByRole("button", { name: "Apply YAML", exact: true })
     .click();
   await expect(page.getByRole("alert")).toContainText("max_tokens_per_batch");
   await expect(yaml).toHaveValue(invalid);
+  await expect(yaml).toBeFocused();
   expect(submitted?.segment.max_tokens_per_batch).toBe(0);
   expect(submitted?.llm.routes).toEqual(settings.llm.routes);
+  const corrected = { ...settings, segment: { ...settings.segment, max_tokens_per_batch: 2300 } };
+  await yaml.fill(JSON.stringify(corrected));
+  await page.getByRole("button", { name: "Apply YAML", exact: true }).press("Enter");
+  await expect(page.getByText("Project settings saved", { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByLabel("Polishing", { exact: true })).toBeEnabled();
+  expect(submitted).toEqual(corrected);
   await expect(page.getByLabel("PDF parser")).toHaveCount(0);
 });

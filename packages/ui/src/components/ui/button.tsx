@@ -20,9 +20,13 @@ const buttonVariants = cva(
         default:
           "bg-primary text-primary-foreground hover:bg-primary-hover active:!bg-primary-pressed "
           + "shadow-raised-invert hover:shadow-raised-invert-hover active:shadow-pressed-invert",
+        // The red face stays dark in dark mode, so use the softer highlight for dark surfaces.
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90 "
-          + "shadow-raised-invert hover:shadow-raised-invert-hover active:shadow-pressed-invert",
+          + "shadow-raised-invert hover:shadow-raised-invert-hover active:shadow-pressed-invert "
+          + "dark:[--shadow-raised-invert:var(--shadow-raised)] "
+          + "dark:[--shadow-raised-invert-hover:var(--shadow-raised-hover)] "
+          + "dark:[--shadow-pressed-invert:var(--shadow-pressed)]",
         // Same physical key in both themes, described only by shadow: a top
         // highlight plus soft shadows on both sides of the edge, because a
         // highlight alone vanishes on white and the key fuses with the page.

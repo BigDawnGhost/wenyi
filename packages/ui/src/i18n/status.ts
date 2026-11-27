@@ -19,7 +19,7 @@ const statuses: Record<string, [MessageKey, Tone]> = {
   reviewing: ["api.reviewingBook", "info"],
   autofixing: ["api.applyingAutofixes", "info"],
   postprocessing: ["api.postprocessing", "info"],
-  pausing: ["api.savingAndPausing", "warning"],
+  pausing: ["api.pausing", "warning"],
   paused: ["common.paused", "warning"],
   interrupted: ["common.interrupted", "warning"],
   done: ["common.completed", "success"],

@@ -33,6 +33,8 @@ export type Capabilities = Output<"Capabilities">;
 export type GlobalConfig = Output<"GlobalConfigOut">;
 export type GlobalConfigInput = components["schemas"]["GlobalConfigInput"];
 export type ModelPingResult = Output<"ModelPingResult">;
+export type DraftModelPingRequest =
+  paths["/settings/models/ping/draft"]["post"]["requestBody"]["content"]["application/json"];
 export type ModelListResult = Output<"ModelListResult">;
 export type ModelListRequest =
   paths["/settings/models/list"]["post"]["requestBody"]["content"]["application/json"];

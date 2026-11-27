@@ -10,10 +10,9 @@ import { object, type Document, nextId } from "./registryEdits";
 import { SettingsGroupHeader } from "./SettingsSection";
 
 export function ProviderSettings({
-  llm, draftLlm, revision, disabled, capabilities, onSave,
+  llm, revision, disabled, capabilities, onSave,
 }: {
   llm: Document;
-  draftLlm: Document;
   revision: number;
   disabled: boolean;
   capabilities?: Capabilities;
@@ -55,7 +54,7 @@ export function ProviderSettings({
           );
         })}
       </Card>
-      {editor && <ProviderDialog initial={{ ...editor, llm, revision }} draftLlm={draftLlm}
+      {editor && <ProviderDialog initial={{ ...editor, llm, revision }}
         returnFocus={() => opener.current?.isConnected ? opener.current : addButton.current}
         capabilities={capabilities}
         onClose={() => setEditor(null)}

@@ -33,6 +33,17 @@ def execution(monkeypatch):
     }
     jobs.get_job_by_arq_id.return_value = job
     jobs.list_jobs.return_value = [job]
+
+    def claim(identity, status, *, expected_status):
+        if job["id"] != identity or job["status"] != expected_status:
+            return False
+        job["status"] = status
+        return True
+
+    jobs.set_job_status.side_effect = claim
+    jobs.finish_workflow.side_effect = lambda pid, jid, *a, **kw: (
+        jobs.list_jobs(pid)[0]["id"] == jid
+    )
     telemetry = Mock()
     operation = Mock(return_value="done")
     dependencies = ExecutionDependencies(
@@ -53,11 +64,12 @@ def test_runner_uses_supplied_ports_not_ambient_repository(execution, backend_co
     request, dependencies, storage = execution
     run_workflow(request, dependencies)
     dependencies.operation.assert_called_once()
-    dependencies.projects.set_project_status.assert_called_once_with("project", "done", error=None)
-    dependencies.jobs.set_job_status.assert_any_call(1, "done", error=None)
+    dependencies.jobs.finish_workflow.assert_called_once_with(
+        "project", 1, "done", expected_status="running", project_status="done", error=None
+    )
     backend_context.repository.get_project.assert_not_called()
     backend_context.repository.set_project_status.assert_not_called()
-    assert storage.close.call_count == 2
+    storage.close.assert_called_once()
     assert (
         dependencies.telemetry.release.call_count == dependencies.telemetry.connect.call_count == 2
     )
@@ -187,11 +199,15 @@ def test_operation_failure_drains_resources_and_records_its_own_run(execution):
     dependencies.operation.side_effect = ValueError("Domain failed")
     with pytest.raises(ValueError, match="Domain failed"):
         run_workflow(request, dependencies)
-    dependencies.projects.set_project_status.assert_called_once_with(
-        "project", "error", error="Domain failed"
+    dependencies.jobs.finish_workflow.assert_called_once_with(
+        "project",
+        1,
+        "error",
+        expected_status="running",
+        project_status="error",
+        error="Domain failed",
     )
-    dependencies.jobs.set_job_status.assert_any_call(1, "error", error="Domain failed")
-    assert storage.close.call_count == 2
+    storage.close.assert_called_once()
     assert dependencies.telemetry.release.call_count == 2
     assert dependencies.metrics.snapshot()["tasks"] == {("error", "pipeline_failed"): 1}
 
@@ -340,10 +356,14 @@ def test_native_panic_lands_failed_terminal_state(execution):
     dependencies.operation.side_effect = NativePanic("native engine panicked")
     with pytest.raises(NativePanic, match="native engine panicked"):
         run_workflow(request, dependencies)
-    dependencies.projects.set_project_status.assert_called_once_with(
-        "project", "error", error="native engine panicked"
+    dependencies.jobs.finish_workflow.assert_called_once_with(
+        "project",
+        1,
+        "error",
+        expected_status="running",
+        project_status="error",
+        error="native engine panicked",
     )
-    dependencies.jobs.set_job_status.assert_any_call(1, "error", error="native engine panicked")
     assert dependencies.metrics.snapshot()["tasks"] == {("error", "pipeline_failed"): 1}
     fields = next(
         call.kwargs
@@ -351,7 +371,7 @@ def test_native_panic_lands_failed_terminal_state(execution):
         if call.args and call.args[0] == "pipeline_error"
     )
     assert fields["error_type"] == "NativePanic"
-    assert storage.close.call_count == 2
+    storage.close.assert_called_once()
     assert dependencies.telemetry.release.call_count == 2
 
 
@@ -469,7 +489,9 @@ def test_slow_cancel_drains_a_real_locked_checkpoint(execution, monkeypatch, tmp
     asyncio.run(scenario())
     counts = dependencies.metrics.snapshot()["task_cancel_drains"]
     assert [(outcome, count) for (outcome, _), count in counts.items()] == [("drained", 1)]
-    dependencies.jobs.set_job_status.assert_any_call(1, "paused", error=None)
+    dependencies.jobs.finish_workflow.assert_called_once_with(
+        "project", 1, "paused", expected_status="running", project_status="paused", error=None
+    )
 
 
 @pytest.mark.parametrize("paused", [False, True])

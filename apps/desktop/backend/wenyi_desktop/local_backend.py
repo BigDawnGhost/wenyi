@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PureWindowsPath
 from threading import Lock
-from typing import TYPE_CHECKING, Any, BinaryIO, Iterator
+from typing import TYPE_CHECKING, Any, BinaryIO, Iterator, Literal
 
 from fastapi import HTTPException
 from wenyi_backend.config_rebuild import load_bootstrap_defaults
@@ -92,21 +92,24 @@ class LocalBackend:
         *,
         library_root: str | Path | None = None,
         install_root: str | Path | None = None,
+        initialize: bool = True,
     ) -> None:
         resolved = Path(workspace).expanduser().resolve()
         self.workspace = Path(_plain_windows_path(str(resolved)))
-        self.workspace.mkdir(parents=True, exist_ok=True)
         # An explicitly injected library is optional. The ordinary default is
         # <data-root>/projects, independent of the executable's location.
         self.library_root = _library_root(library_root)
         self.install_root = Path(install_root) if install_root else None
         self.config_path = config_path
         self.database = paths.catalog(self.workspace)
-        catalog.initialize(self.database)
         # Releasing memory must not depend on an available project directory.
         self._export_leases_lock = Lock()
         self._export_leases: dict[int, int] = {}
         self._removing_projects: set[str] = set()
+        if not initialize:
+            catalog.require_current(self.database)
+            return
+        catalog.initialize(self.database)
         with self.transaction() as connection:
             connection.executescript("""
                 CREATE TABLE IF NOT EXISTS projects (
@@ -590,20 +593,13 @@ class LocalBackend:
     def set_project_status(self, pid: str, status: str, *, error: str | None = None) -> None:
         self.update_project(pid, status=status, error=error)
 
-    def request_pause(self, pid: str, run_id: str) -> bool:
+    def request_pause(self, pid: str, run_id: str) -> Literal["paused", "pausing"] | None:
         """Serialize the pause decision with completion and new task admission."""
         from wenyi_backend.ports.projects import RUNNING_PROJECT_STATUSES
 
         with self.transaction() as connection:
             project = self._get("projects", pid, connection)
-            job = next(
-                (
-                    row
-                    for row in self._list("jobs", pid=pid, connection=connection)
-                    if row["kind"] != "export"
-                ),
-                None,
-            )
+            job = self.latest_workflow_job(pid, connection=connection)
             if (
                 project is None
                 or project["status"] not in RUNNING_PROJECT_STATUSES
@@ -611,9 +607,13 @@ class LocalBackend:
                 or job["run_id"] != run_id
                 or job["status"] not in {"queued", "running"}
             ):
-                return False
+                return None
+            if job["status"] == "queued":
+                self.set_job_status(job["id"], "paused", connection=connection)
+                self.update_project(pid, status="paused", error=None, connection=connection)
+                return "paused"
             self.update_project(pid, status="pausing", error=None, connection=connection)
-            return True
+            return "pausing"
 
     def set_project_strategy(
         self, pid: str, strategy: dict, *, connection: sqlite3.Connection | None = None
@@ -1035,9 +1035,10 @@ class LocalBackend:
         *,
         result: dict | None = None,
         expected_status: str | set[str] | None = None,
+        connection: sqlite3.Connection | None = None,
     ) -> bool:
         """Conditionally transition a job; return False for a stale runner."""
-        with self.transaction() as conn:
+        with self.transaction(connection) as conn:
             job = self._get("jobs", job_id, conn)
             if job is None:
                 return False
@@ -1050,8 +1051,34 @@ class LocalBackend:
             self._put("jobs", job_id, job, conn)
         return True
 
-    def latest_workflow_job(self, pid: str) -> dict | None:
-        with self.transaction(write=False) as conn:
+    def finish_workflow(
+        self,
+        pid: str,
+        job_id: int,
+        status: str,
+        *,
+        expected_status: str,
+        project_status: str,
+        error: str | None,
+    ) -> bool:
+        with self.transaction() as conn:
+            job = self._get("jobs", job_id, conn)
+            if not job or job["project_id"] != pid or job["kind"] == "export":
+                return False
+            if not self.set_job_status(
+                job_id, status, error, expected_status=expected_status, connection=conn
+            ):
+                return False
+            latest = self.latest_workflow_job(pid, connection=conn)
+            if not latest or latest["id"] != job_id:
+                return False
+            self.update_project(pid, status=project_status, error=error, connection=conn)
+            return True
+
+    def latest_workflow_job(
+        self, pid: str, *, connection: sqlite3.Connection | None = None
+    ) -> dict | None:
+        with self.transaction(connection, write=False) as conn:
             row = conn.execute(
                 """SELECT document FROM jobs WHERE project_id=?
                    AND json_extract(document, '$.kind') <> 'export' ORDER BY id DESC LIMIT 1""",
