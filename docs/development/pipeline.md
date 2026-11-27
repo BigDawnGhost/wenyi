@@ -264,7 +264,10 @@ Preserve the lock roles:
 - Standalone export captures a coherent manifest/chapter snapshot under short locks,
   then renders without holding the long translation lock.
 
-File JSON publication uses a same-directory temporary file and atomic replacement.
+File JSON publication creates an exclusive same-directory temporary file with a
+fixed-length name and publishes it by atomic replacement. Initialization discards
+its derived state as needed; it does not sweep temporary-looking names elsewhere
+in the run because they may be published artifacts or belong to other lock domains.
 For chapter completion, atomically publishing a flushed `.chapter-publication.json`
 commits both the chapter and manifest status under the short state lock. Until both
 legacy files have been updated, Wenyi readers use the verified after-images in the

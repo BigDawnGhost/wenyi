@@ -14,6 +14,7 @@ from .atomic_write import sync_directory, write_text_atomic
 from .io_path import to_io_path
 
 JOURNAL_NAME = ".chapter-publication.json"
+JOURNAL_TEMPORARY_PREFIX = f"{JOURNAL_NAME}."
 
 
 def read_text(path: str) -> str:
@@ -156,7 +157,13 @@ def _materialize_images(
     journal: dict | None = None,
 ) -> None:
     if journal is not None:
-        write_text_atomic(journal_path, json.dumps(journal, ensure_ascii=False))
+        # Keep the unpublished record out of the public artifact listing, even
+        # if the process stops before publishing it.
+        write_text_atomic(
+            journal_path,
+            json.dumps(journal, ensure_ascii=False),
+            temporary_prefix=JOURNAL_TEMPORARY_PREFIX,
+        )
     run_dir = os.path.dirname(journal_path)
     # Also required on recovery: the old process may have stopped just after rename.
     sync_directory(run_dir)

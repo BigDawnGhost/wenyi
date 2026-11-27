@@ -148,7 +148,9 @@ export function ModelConnectivity({
                   <td className="py-2 pr-3 whitespace-nowrap">
                     {result.latency_ms == null ? "—" : `${result.latency_ms} ms`}
                   </td>
-                  <td className="py-2">{detail(result)}</td>
+                  <td className="py-2">
+                    <span className={result.ok ? undefined : "select-text"}>{detail(result)}</span>
+                  </td>
                 </tr>
               ))}
             </tbody>

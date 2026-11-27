@@ -9,7 +9,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import re
 from bisect import bisect_right
 from collections.abc import Iterable, Iterator
@@ -20,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from ..alignment.objects import ObjectResolution, object_marker, resolve_objects
+from ..atomicio import publish_target
 from ..markup.objects import OBJECT_RELATION, export_object_placements, object_anchors
 from ..pdf_bridge import BabeldocBridgeClient, BabeldocBridgeError
 from .models import KIND_HEADING, KIND_TEXT, Chapter, Document, Segment
@@ -415,10 +415,12 @@ def read_pdf_babeldoc(
         raise BabeldocBridgeError("bridge extract returned no paragraphs")
 
     if cache_dir:
-        os.makedirs(cache_dir, exist_ok=True)
-        cache_path = os.path.join(cache_dir, "babeldoc_extract.json")
-        with open(cache_path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
+        # An interrupted dump must never leave a truncated extract behind: the
+        # cache is published by replacement, so a failure keeps the old file or none.
+        cache_path = Path(cache_dir) / "babeldoc_extract.json"
+        with publish_target(cache_path) as temp:
+            with open(temp, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, indent=2)
 
     title = Path(path).stem
     try:

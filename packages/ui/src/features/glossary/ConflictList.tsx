@@ -47,14 +47,14 @@ export function ConflictList({
             key={c.id}
             className="flex flex-wrap items-center gap-3 text-sm border-t border-subtle pt-2"
           >
-            <span className="font-medium">{c.source}</span>
+            <span className="select-text font-medium">{c.source}</span>
             <span className="text-muted-foreground">
               {tr("glossary.current")}
-              {c.existing_target}
+              <span className="select-text">{c.existing_target}</span>
             </span>
             <span className="text-muted-foreground">
               {tr("glossary.aiSuggestion")}
-              {c.proposed_target}
+              <span className="select-text">{c.proposed_target}</span>
             </span>
             <span className="flex gap-1 ml-auto">
               <Button
