@@ -7,6 +7,7 @@ import { initTheme, setTheme } from "../../src/theme";
 import "@wenyi/ui/styles.css";
 
 function Harness() {
+  const [pageClicks, setPageClicks] = React.useState(0);
   return (
     <main className="space-y-5 p-6">
       <div className="flex gap-3">
@@ -24,6 +25,13 @@ function Harness() {
           </Button>
         ))}
       </div>
+      <button
+        // Tailwind scans the production sources, not this fixture.
+        style={{ position: "fixed", inset: "auto 0 0", width: "100%", height: "40vh" }}
+        onClick={() => setPageClicks(count => count + 1)}
+      >
+        Page clicks: {pageClicks}
+      </button>
       <NotificationToaster />
     </main>
   );
