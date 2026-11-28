@@ -48,9 +48,11 @@ async function setup(
   mode = "automatic",
   phase = "available",
   notes = releaseNotes,
-  transfer: { downloaded?: number; total?: number | null } = {},
+  options: { downloaded?: number; total?: number | null; failFirstDownload?: boolean } = {},
 ) {
-  await page.addInitScript(({ mode, phase, notes, transfer }) => {
+  const { failFirstDownload = false, ...transfer } = options;
+  await page.addInitScript(({ mode, phase, notes, transfer, failFirstDownload }) => {
+    let failDownload = failFirstDownload;
     const status = {
       currentVersion: "1.0.0", mode, phase, version: "1.1.0",
       notes, downloaded: 0, total: 100,
@@ -67,9 +69,19 @@ async function setup(
           if (command === "desktop_update_status") return { ...status };
           if (command === "desktop_update_check") status.phase = "available";
           if (command === "desktop_update_download") {
+            status.error = undefined;
             status.phase = "downloading";
             status.downloaded = 50;
-            setTimeout(() => { status.phase = "ready"; status.downloaded = 100; }, 1500);
+            setTimeout(() => {
+              if (failDownload) {
+                failDownload = false;
+                status.phase = "available";
+                status.error = "download_failed";
+              } else {
+                status.phase = "ready";
+                status.downloaded = 100;
+              }
+            }, 1500);
           }
           if (command === "desktop_update_install") {
             // The native command rejects with { code, message }, not a sentence.
@@ -80,7 +92,7 @@ async function setup(
         },
       },
     });
-  }, { mode, phase, notes, transfer });
+  }, { mode, phase, notes, transfer, failFirstDownload });
   await fakeApi(page);
   await page.goto("/settings/updates");
 }
@@ -133,6 +145,17 @@ test("About polls downloads and confirms installation with busy feedback", async
   await expect(section.getByRole("alertdialog")).toBeVisible();
   await section.getByRole("button", { name: "Confirm install and restart" }).click();
   await expect(section.getByRole("alert")).toContainText("all project jobs and native exports");
+});
+
+test("a background download failure is shown and the download can be retried", async ({ page }) => {
+  await setup(page, "automatic", "available", releaseNotes, { failFirstDownload: true });
+  const section = page.getByTestId("desktop-updates");
+  const download = section.getByRole("button", { name: "Download update" });
+  await download.click();
+  await expect(section.getByRole("alert")).toHaveText("Download failed. Please retry the download.");
+  await download.click();
+  await expect(section.getByRole("button", { name: "Install and restart", exact: true })).toBeEnabled();
+  await expect(section.getByRole("alert")).toHaveCount(0);
 });
 
 test("update transfers show readable sizes and theme-aware progress", async ({ page }, testInfo) => {

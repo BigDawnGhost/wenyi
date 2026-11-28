@@ -32,12 +32,16 @@ struct SourceIdentity {
 
 impl SourceIdentity {
     fn read(file: &File) -> Result<Self> {
+        let unavailable = || {
+            crate::ipc_error::IpcError::new(
+                codes::EXPORT_SOURCE_UNAVAILABLE,
+                "Cannot identify source file.",
+            )
+        };
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            let metadata = file
-                .metadata()
-                .map_err(|_| "Cannot identify source file.")?;
+            let metadata = file.metadata().map_err(|_| unavailable())?;
             Ok(Self {
                 volume: metadata.dev(),
                 file: u128::from(metadata.ino()),
@@ -59,10 +63,7 @@ impl SourceIdentity {
                 )
             } == 0
             {
-                return Err(crate::ipc_error::IpcError::new(
-                    codes::EXPORT_SOURCE_UNAVAILABLE,
-                    "Cannot identify source file.",
-                ));
+                return Err(unavailable());
             }
             let info = unsafe { info.assume_init() };
             Ok(Self {

@@ -11,7 +11,6 @@ export const IpcErrorCodes = {
   updateBusy: "update_busy",
   updateUnavailable: "update_unavailable",
   updateCheckFailed: "update_check_failed",
-  updateDownloadFailed: "update_download_failed",
   updateInstallFailed: "update_install_failed",
   updateBackupFailed: "update_backup_failed",
   exportSourceUnavailable: "export_source_unavailable",
