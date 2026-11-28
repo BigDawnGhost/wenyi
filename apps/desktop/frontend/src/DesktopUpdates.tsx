@@ -26,7 +26,6 @@ const SUCCESS_LABELS: Record<string, NonNullable<Status["error"]>> = {
   [IpcErrorCodes.updateBusy]: "busy",
   [IpcErrorCodes.updateUnavailable]: "unavailable",
   [IpcErrorCodes.updateCheckFailed]: "check_failed",
-  [IpcErrorCodes.updateDownloadFailed]: "download_failed",
   [IpcErrorCodes.updateInstallFailed]: "install_failed",
 };
 
