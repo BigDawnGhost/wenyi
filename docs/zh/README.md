@@ -12,7 +12,7 @@
 
 全书理解 · 术语一致 · 取证式审校
 
-[![使用文档](https://img.shields.io/badge/文档-简体中文-D4B56A?style=flat-square&labelColor=00263D)](https://bigdawnghost.github.io/wenyi/zh/)
+[使用文档](https://bigdawnghost.github.io/wenyi/zh/)
 
 [![License](https://img.shields.io/badge/license-GPLv3-D4B56A?style=flat-square&labelColor=00263D)](../../LICENSE)
 [![Stars](https://img.shields.io/github/stars/BigDawnGhost/wenyi?style=flat-square&labelColor=00263D&color=D4B56A)](https://github.com/BigDawnGhost/wenyi/stargazers)

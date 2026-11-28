@@ -12,7 +12,7 @@ A desktop app for translating books and long-form writing, with the whole work i
 
 Whole-book understanding · Consistent terminology · Evidence-based review
 
-[![Documentation](https://img.shields.io/badge/Docs-English-D4B56A?style=flat-square&labelColor=00263D)](https://bigdawnghost.github.io/wenyi/)
+[Documentation](https://bigdawnghost.github.io/wenyi/)
 
 [![License](https://img.shields.io/badge/license-GPLv3-D4B56A?style=flat-square&labelColor=00263D)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/BigDawnGhost/wenyi?style=flat-square&labelColor=00263D&color=D4B56A)](https://github.com/BigDawnGhost/wenyi/stargazers)
