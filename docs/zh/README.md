@@ -12,21 +12,23 @@
 
 全书理解 · 术语一致 · 取证式审校
 
+[使用文档](https://bigdawnghost.github.io/wenyi/zh/)
+
 [![License](https://img.shields.io/badge/license-GPLv3-D4B56A?style=flat-square&labelColor=00263D)](../../LICENSE)
 [![Stars](https://img.shields.io/github/stars/BigDawnGhost/wenyi?style=flat-square&labelColor=00263D&color=D4B56A)](https://github.com/BigDawnGhost/wenyi/stargazers)
 [![Discord](https://img.shields.io/badge/Discord-join-D4B56A?style=flat-square&labelColor=00263D&logo=discord&logoColor=white)](https://discord.gg/sM3AQcF5D2)
 
-[快速开始](#快速开始) · [支持格式](#支持格式) · [界面预览](#界面预览) · [使用文档](#文档)
-
 [English](../../README.md) | **简体中文**
-
-<a href="https://hellogithub.com/repository/BigDawnGhost/wenyi" target="_blank"><img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=648c0ab0997c42479027e360f604fa23&claim_uid=EkLpt1FHIqRrade&theme=small" alt="Featured｜HelloGitHub" /></a>
-
-<a href="https://www.readfrog.app/zh?utm_source=github&utm_medium=readme&utm_campaign=wenyi&utm_content=zh-CN" target="_blank"><img src="../images/read-frog-banner.png" alt="陪读蛙：在浏览器里沉浸式双语翻译网页、划词与 YouTube 字幕，免费安装，开始翻译。" /></a>
 
 </div>
 
 ---
+
+<div align="center">
+
+<a href="https://hellogithub.com/repository/BigDawnGhost/wenyi" target="_blank"><img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=648c0ab0997c42479027e360f604fa23&claim_uid=EkLpt1FHIqRrade&theme=small" alt="Featured｜HelloGitHub" /></a>
+
+</div>
 
 ## 为什么选择文译
 
@@ -36,7 +38,8 @@
 - **术语一致** — 翻译中提取人名、术语和固定表达，发现译法冲突后提示裁决，并将结果用于后续批次。
 - **翻译与审校** — 可选润色和取证式全书审校，结合带版本记录的段落编辑完成校阅。
 - **断点续跑** — 自动保存已完成批次和章节进度，重新打开项目即可从检查点继续。
-- **灵活选模型** — 支持 DeepSeek、OpenAI、OpenRouter、OrcaRouter、Google Gemini、Ollama、vLLM 及其他 OpenAI 兼容服务，可通过[模型路由](reference/configuration.md)按操作选择模型、共享请求限额。
+
+![翻译、术语与审校时序：每批先保存译文再抽取术语；全书审校取证后试改副本，自动修复核对正式译文后才写回。](../images/translation-sequence-zh.svg)
 
 ---
 
@@ -87,34 +90,11 @@ Windows 命令、其他提供商、升级及续跑／导出选项见 [CLI 使用
 
 ---
 
-## 界面预览
-
-Desktop 与 Web 共用校阅工作台，可查看实时进度、编辑段落并追踪版本，以及查看全书审校结果。下图展示 Web 中文界面，也可在设置中切换为英文。
-
-<p align="center">
-  <img src="../images/web-translation-overview.png" alt="翻译总览：查看步骤用量、缓存命中率和运行耗时。" width="960">
-  <br>
-  <sub>翻译总览：查看步骤用量、缓存命中率和运行耗时。</sub>
-</p>
-
-**翻译示例：** 可在 [wenyi-bookcase](https://github.com/BigDawnGhost/wenyi-bookcase) 查看公版书译作，也欢迎提交分享。请勿分享无授权的版权文本、私人书籍或包含敏感信息的工作区数据。
-
----
-
 ## 当前限制
 
 - **翻译质量** — 译文质量受所选大模型的能力限制。
 - **Token 消耗** — 润色和全书审校可能显著增加 token 消耗；开启影子修订后，还可能执行多次全书审校和额外 Fixer 调用。
 - **存储空间** — 工作区大小随书籍长度增长，极长书籍可能占用较多磁盘空间。
-
----
-
-## 文档
-
-**文档站**：[bigdawnghost.github.io/wenyi/zh](https://bigdawnghost.github.io/wenyi/zh/)
-
-站点侧栏按用户指南、参考资料和开发维护分类，中英文通过站点语言菜单切换。
-贡献与审查要求见[贡献指南](CONTRIBUTING.md)。
 
 ---
 
@@ -126,6 +106,10 @@ Desktop 与 Web 共用校阅工作台，可查看实时进度、编辑段落并�
 - QQ 群：1055065098
 - [GitHub Issues](https://github.com/BigDawnGhost/wenyi/issues) — 问题反馈与功能建议
 - [GitHub Discussions](https://github.com/BigDawnGhost/wenyi/discussions) — 想法与讨论
+
+<p align="center">
+  <a href="https://www.readfrog.app/zh?utm_source=github&utm_medium=readme&utm_campaign=wenyi&utm_content=zh-CN" target="_blank"><img src="../images/read-frog-banner.png" alt="陪读蛙：在浏览器里沉浸式双语翻译网页、划词与 YouTube 字幕，免费安装，开始翻译。" /></a>
+</p>
 
 ---
 
