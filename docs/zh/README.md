@@ -28,8 +28,6 @@
 
 <a href="https://hellogithub.com/repository/BigDawnGhost/wenyi" target="_blank"><img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=648c0ab0997c42479027e360f604fa23&claim_uid=EkLpt1FHIqRrade&theme=small" alt="Featured｜HelloGitHub" /></a>
 
-<a href="https://www.readfrog.app/zh?utm_source=github&utm_medium=readme&utm_campaign=wenyi&utm_content=zh-CN" target="_blank"><img src="../images/read-frog-banner.png" alt="陪读蛙：在浏览器里沉浸式双语翻译网页、划词与 YouTube 字幕，免费安装，开始翻译。" /></a>
-
 </div>
 
 ## 为什么选择文译
@@ -108,6 +106,10 @@ Windows 命令、其他提供商、升级及续跑／导出选项见 [CLI 使用
 - QQ 群：1055065098
 - [GitHub Issues](https://github.com/BigDawnGhost/wenyi/issues) — 问题反馈与功能建议
 - [GitHub Discussions](https://github.com/BigDawnGhost/wenyi/discussions) — 想法与讨论
+
+<p align="center">
+  <a href="https://www.readfrog.app/zh?utm_source=github&utm_medium=readme&utm_campaign=wenyi&utm_content=zh-CN" target="_blank"><img src="../images/read-frog-banner.png" alt="陪读蛙：在浏览器里沉浸式双语翻译网页、划词与 YouTube 字幕，免费安装，开始翻译。" /></a>
+</p>
 
 ---
 

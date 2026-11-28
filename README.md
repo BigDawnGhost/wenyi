@@ -28,8 +28,6 @@ Whole-book understanding · Consistent terminology · Evidence-based review
 
 <a href="https://hellogithub.com/repository/BigDawnGhost/wenyi" target="_blank"><img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=648c0ab0997c42479027e360f604fa23&claim_uid=EkLpt1FHIqRrade&theme=small" alt="Featured｜HelloGitHub" /></a>
 
-<a href="https://www.readfrog.app/zh?utm_source=github&utm_medium=readme&utm_campaign=wenyi&utm_content=en" target="_blank"><img src="docs/images/read-frog-banner.png" alt="陪读蛙：在浏览器里沉浸式双语翻译网页、划词与 YouTube 字幕，免费安装，开始翻译。" /></a>
-
 </div>
 
 ## Why Wenyi
@@ -108,6 +106,10 @@ Wenyi is a personal project created to help bring books and long-form writing ac
 - QQ group: 1055065098
 - [GitHub Issues](https://github.com/BigDawnGhost/wenyi/issues) — bug reports and feature requests
 - [GitHub Discussions](https://github.com/BigDawnGhost/wenyi/discussions) — ideas and questions
+
+<p align="center">
+  <a href="https://www.readfrog.app/zh?utm_source=github&utm_medium=readme&utm_campaign=wenyi&utm_content=en" target="_blank"><img src="docs/images/read-frog-banner.png" alt="陪读蛙：在浏览器里沉浸式双语翻译网页、划词与 YouTube 字幕，免费安装，开始翻译。" /></a>
+</p>
 
 ---
 
