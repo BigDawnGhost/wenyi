@@ -408,6 +408,316 @@ class TestExtractor(unittest.TestCase):
             self.assertEqual(summary["history_unresolved"], 1)
             store.close()
 
+    def test_rejects_shadowed_and_unbounded_sources_without_false_positives(self):
+        # Case 1: 少将 only appears inside 少将军 in this batch (longer term in same batch).
+        payload = json.dumps(
+            {
+                "terms": [
+                    {"source": "少将军", "target": "the young general", "type": "person"},
+                    {"source": "少将", "target": "young general", "type": "term"},
+                ]
+            },
+            ensure_ascii=False,
+        )
+        extractor = GlossaryExtractor(FakeClient(handler=lambda *args: payload), _cfg())
+        with self.assertLogs("wenyi_core.agents.glossary_extractor", level="WARNING") as logs:
+            result = extractor.extract(
+                "少将军走进了大厅。", "The young general entered the hall.", []
+            )
+        self.assertEqual([t.source for t in result], ["少将军"])
+        self.assertEqual(len(logs.records), 1)
+        self.assertNotIn("少将", logs.records[0].getMessage())
+
+        # Case 2: 少将 only appears inside 少将军 (longer term already in existing glossary).
+        payload_short = json.dumps(
+            {"terms": [{"source": "少将", "target": "young general", "type": "term"}]},
+            ensure_ascii=False,
+        )
+        extractor2 = GlossaryExtractor(FakeClient(handler=lambda *args: payload_short), _cfg())
+        existing = [GlossaryTerm(source="少将军", target="the young general", type="person")]
+        self.assertEqual(
+            extractor2.extract(
+                "少将军走进了大厅。", "The young general entered the hall.", existing
+            ),
+            [],
+        )
+
+        # Case 3: When 少将 ALSO appears standalone outside 少将军, keep both.
+        result_both = extractor.extract(
+            "少将军向少将敬礼。",
+            "The young general saluted the major general.",
+            [],
+        )
+        self.assertEqual([t.source for t in result_both], ["少将军", "少将"])
+
+        # Case 4: A term's own longer alias never shadows itself (newly extracted or existing).
+        alias_payload = json.dumps(
+            {
+                "terms": [
+                    {
+                        "source": "堀北",
+                        "target": "堀北",
+                        "type": "person",
+                        "aliases": ["堀北さん"],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+        alias_ext = GlossaryExtractor(FakeClient(handler=lambda *args: alias_payload), _cfg())
+        self.assertEqual(
+            [t.source for t in alias_ext.extract("堀北さん走进了教室。", "堀北走进了教室。", [])],
+            ["堀北"],
+        )
+        existing_same = [
+            GlossaryTerm(source="堀北", target="堀北", type="person", aliases=["堀北さん"])
+        ]
+        bare_payload = json.dumps(
+            {"terms": [{"source": "堀北", "target": "堀北", "type": "person"}]},
+            ensure_ascii=False,
+        )
+        bare_ext = GlossaryExtractor(FakeClient(handler=lambda *args: bare_payload), _cfg())
+        self.assertEqual(
+            [
+                t.source
+                for t in bare_ext.extract("堀北さん走进了教室。", "堀北走进了教室。", existing_same)
+            ],
+            ["堀北"],
+        )
+
+        # Case 5: Furigana markers are stripped consistently when checking shadowed substrings.
+        ruby_payload = json.dumps(
+            {
+                "terms": [
+                    {"source": "少将軍", "target": "the young general", "type": "person"},
+                    {"source": "少将", "target": "young general", "type": "term"},
+                ]
+            },
+            ensure_ascii=False,
+        )
+        ruby_ext = GlossaryExtractor(FakeClient(handler=lambda *args: ruby_payload), _cfg())
+        self.assertEqual(
+            [
+                t.source
+                for t in ruby_ext.extract(
+                    "少〘しょう〙将〘しょう〙軍〘ぐん〙が入った。",
+                    "The young general entered.",
+                    [],
+                )
+            ],
+            ["少将軍"],
+        )
+
+        # Case 6: Space-delimited token boundary prevents extracting "Ann" from "Anna", while
+        # preserving standalone "Ann" and inflected lemmas whose matching alias is present.
+        en_payload = json.dumps({"terms": [{"source": "Ann", "target": "安", "type": "person"}]})
+        en_cfg = _cfg()
+        en_cfg.source_lang = "en"
+        en_ext = GlossaryExtractor(FakeClient(handler=lambda *args: en_payload), en_cfg)
+        self.assertEqual(en_ext.extract("Anna arrived early.", "安娜早到了。", []), [])
+        self.assertEqual(len(en_ext.extract("Ann arrived early.", "安早到了。", [])), 1)
+
+        inflected_payload = json.dumps(
+            {"terms": [{"source": "Dragon", "target": "巨龙", "aliases": ["Dragons"]}]}
+        )
+        inflected_ext = GlossaryExtractor(
+            FakeClient(handler=lambda *args: inflected_payload), en_cfg
+        )
+        self.assertEqual(
+            [
+                t.source
+                for t in inflected_ext.extract("Dragons flew overhead.", "巨龙飞过头顶。", [])
+            ],
+            ["Dragon"],
+        )
+
+        # Case 7: Non-recurring stored terms still guard against shadowed extractions when
+        # extract_and_store filters the prompt glossary via source_corpus.
+        with tempfile.TemporaryDirectory() as d:
+            store = GlossaryStore(os.path.join(d, "g.db"))
+            store.upsert_term(
+                GlossaryTerm(source="少将军", target="the young general", type="person")
+            )
+            summary = extractor2.extract_and_store(
+                store,
+                "少将军走进了大厅。",
+                "The young general entered the hall.",
+                chapter=0,
+                source_corpus="少将军走进了大厅。",
+            )
+            self.assertEqual(summary["inserted"], 0)
+            self.assertIsNone(store.get_term("少将"))
+            store.close()
+
+    def test_rejects_self_contradictory_notes_without_rejecting_valid_contrasts(self):
+        payload = json.dumps(
+            {
+                "terms": [
+                    {
+                        "source": "兄弟会",
+                        "target": "Brothers gang",
+                        "type": "organization",
+                        "note": "Generic fraternal organization, distinct from the Brothers gang",
+                    },
+                    {
+                        "source": "兄弟会二",
+                        "target": "Brothers gang",
+                        "type": "organization",
+                        "note": 'Do not translate as "Brothers gang" in this chapter',
+                    },
+                    {
+                        "source": "兄弟会三",
+                        "target": "Brothers gang",
+                        "type": "organization",
+                        "note": "Avoid Brothers gang when referring to this faction",
+                    },
+                    {
+                        "source": "兄弟会分支",
+                        "target": "兄弟帮",
+                        "type": "organization",
+                        "note": "普通社团，区别于兄弟帮",
+                    },
+                    {
+                        "source": "兄弟会别称",
+                        "target": "兄弟帮",
+                        "type": "organization",
+                        "note": "区别于「兄弟帮」的普通社团",
+                    },
+                    {
+                        "source": "兄弟会四",
+                        "target": "兄弟帮",
+                        "type": "organization",
+                        "note": "并非兄弟帮，而是普通社团",
+                    },
+                    {
+                        "source": "兄弟会五",
+                        "target": "Brothers gang",
+                        "type": "organization",
+                        "note": "不要译为 Brothers gang。",
+                    },
+                    {
+                        "source": "议会",
+                        "target": "Council",
+                        "type": "organization",
+                        "note": "Formal governing body, not a club and not the Council of Elders",
+                    },
+                    {
+                        "source": "兄弟社",
+                        "target": "Brothers",
+                        "type": "organization",
+                        "note": "Short name for the society, distinct from the Brothers gang",
+                    },
+                    {
+                        "source": "将军",
+                        "target": "General",
+                        "type": "term",
+                        "note": "Military rank, not a general term",
+                    },
+                    {
+                        "source": "泉",
+                        "target": "Spring",
+                        "type": "place",
+                        "note": "Water source, not spring (season)",
+                    },
+                    {
+                        "source": "约翰",
+                        "target": "John",
+                        "type": "person",
+                        "note": "Main protagonist, not John Smith and not John's brother",
+                    },
+                    {
+                        "source": "王",
+                        "target": "王",
+                        "type": "person",
+                        "note": "不是王子，而是姓氏",
+                    },
+                    {
+                        "source": "John",
+                        "target": "约翰",
+                        "type": "person",
+                        "note": "主角，不是约翰的哥哥，也区别于约翰的父亲",
+                    },
+                    {
+                        "source": "正式",
+                        "target": "正式",
+                        "type": "term",
+                        "note": "此处为非正式的称呼",
+                    },
+                    {
+                        "source": "不明人物",
+                        "target": "约翰",
+                        "type": "person",
+                        "note": "不确定是不是约翰",
+                    },
+                    {
+                        "source": "约瑟夫",
+                        "target": "John",
+                        "type": "person",
+                        "note": "主角，不是 John Smith，也不是 John 的哥哥",
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        )
+        extractor = GlossaryExtractor(FakeClient(handler=lambda *args: payload), _cfg())
+        with self.assertLogs("wenyi_core.agents.glossary_extractor", level="WARNING") as logs:
+            result = extractor.extract(
+                "兄弟会、议会、兄弟社、将军、泉、约翰、王、John、正式、不明人物和约瑟夫。",
+                "Text.",
+                [],
+            )
+        self.assertEqual(
+            [t.source for t in result],
+            ["议会", "兄弟社", "将军", "泉", "约翰", "王", "John", "正式", "不明人物", "约瑟夫"],
+        )
+        self.assertEqual(len(logs.records), 1)
+        message = logs.records[0].getMessage()
+        self.assertIn("7 glossary extraction(s)", message)
+        self.assertNotIn("Brothers gang", message)
+        self.assertNotIn("兄弟会", message)
+
+    def test_keeps_negated_comparison_notes_that_affirm_target(self):
+        payload = json.dumps(
+            {
+                "terms": [
+                    {
+                        "source": "春",
+                        "target": "Spring",
+                        "type": "term",
+                        "note": "Usage is not different from Spring",
+                    },
+                    {
+                        "source": "夏",
+                        "target": "Summer",
+                        "type": "term",
+                        "note": "This term isn't distinct from Summer",
+                    },
+                    {
+                        "source": "秋",
+                        "target": "Autumn",
+                        "type": "term",
+                        "note": "Sense is no different from Autumn, and not unlike Autumn",
+                    },
+                    {
+                        "source": "冬",
+                        "target": "冬天",
+                        "type": "term",
+                        "note": "此处含义并非不同于冬天",
+                    },
+                    {
+                        "source": "冰",
+                        "target": "Ice",
+                        "type": "term",
+                        "note": "Not different from frost; rather than Ice",
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        )
+        extractor = GlossaryExtractor(FakeClient(handler=lambda *args: payload), _cfg())
+        result = extractor.extract("春、夏、秋、冬和冰。", "Text.", [])
+        self.assertEqual([t.source for t in result], ["春", "夏", "秋", "冬"])
+
 
 if __name__ == "__main__":
     unittest.main()

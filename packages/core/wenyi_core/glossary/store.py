@@ -42,8 +42,10 @@ __all__ = [
     "GlossaryOccurrenceMatcher",
     "GlossaryStore",
     "GlossaryTerm",
+    "normalize_match_text",
     "search_term_page",
     "source_matches_text",
+    "source_occurrence_spans",
     "term_match_sources",
 ]
 
@@ -84,7 +86,7 @@ CREATE TABLE IF NOT EXISTS term_conflicts (
 _RUBY_MARK_RE = re.compile(r"〘[^〙]*〙")
 
 
-def _match_text(text: str) -> str:
+def normalize_match_text(text: str) -> str:
     """Normalize width, compatibility forms and case for glossary matching.
     Strip embedded furigana so a reading inserted inside a word does not prevent that word
     from matching. The original ruby markup remains in the source template.
@@ -141,10 +143,10 @@ def source_matches_text(source: str, text: str) -> bool:
     for ASCII, Latin, Greek and Cyrillic to avoid matching Ann inside Anna or a short
     Cyrillic word inside a longer one.
     """
-    key = _match_text(source).strip()
+    key = normalize_match_text(source).strip()
     if not key:
         return False
-    normalized_text = _match_text(text)
+    normalized_text = normalize_match_text(text)
     if pattern := _source_pattern(key):
         return pattern.search(normalized_text) is not None
     return key in normalized_text
@@ -163,23 +165,24 @@ def term_match_sources(term: GlossaryTerm) -> list[str]:
 
 def trusted_match_sources(term: GlossaryTerm, all_terms: list[GlossaryTerm]) -> list[str]:
     """For note citations, use aliases only when no other glossary identity claims them."""
-    canonical = _match_text(term.source).strip()
+    canonical = normalize_match_text(term.source).strip()
     claimed = {
-        _match_text(key).strip()
+        normalize_match_text(key).strip()
         for other in all_terms
-        if _match_text(other.source).strip() != canonical
+        if normalize_match_text(other.source).strip() != canonical
         for key in [other.source, *other.aliases]
     }
     return [
         key
         for key in dict.fromkeys(term_match_sources(term))
-        if key == term.source or (term.status == "ok" and _match_text(key).strip() not in claimed)
+        if key == term.source
+        or (term.status == "ok" and normalize_match_text(key).strip() not in claimed)
     ]
 
 
-def _source_occurrence_spans(source: str, normalized_text: str) -> list[tuple[int, int]]:
+def source_occurrence_spans(source: str, normalized_text: str) -> list[tuple[int, int]]:
     """Return nonoverlapping source-term spans in normalized text."""
-    key = _match_text(source).strip()
+    key = normalize_match_text(source).strip()
     if not key:
         return []
     if pattern := _source_pattern(key):
@@ -211,7 +214,7 @@ class GlossaryOccurrenceMatcher:
     """Reuse one normalized corpus to detect repeated terms by source and aliases."""
 
     def __init__(self, text: str):
-        self.normalized_text = _match_text(text)
+        self.normalized_text = normalize_match_text(text)
 
     def recurring_terms(
         self,
@@ -226,10 +229,12 @@ class GlossaryOccurrenceMatcher:
         recurring: list[GlossaryTerm] = []
         for term in terms:
             raw_keys = term_match_sources(term)
-            keys = {normalized for key in raw_keys if (normalized := _match_text(key).strip())}
+            keys = {
+                normalized for key in raw_keys if (normalized := normalize_match_text(key).strip())
+            }
             spans: set[tuple[int, int]] = set()
             for key in keys:
-                spans.update(_source_occurrence_spans(key, self.normalized_text))
+                spans.update(source_occurrence_spans(key, self.normalized_text))
             if _merged_occurrence_count(spans) >= min_occurrences:
                 recurring.append(term)
         return recurring
@@ -457,7 +462,7 @@ class GlossaryStore:
         Match evidence and local revision context without querying the database per term.
         """
         out: list[GlossaryTerm] = []
-        normalized_text = _match_text(text)
+        normalized_text = normalize_match_text(text)
         for term in terms:
             # Forms of address, verbal habits and fixed expressions carry tone or context. A bare-name alias
             # must not inject their derived translation into an ordinary address.
