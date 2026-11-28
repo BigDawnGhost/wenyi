@@ -67,6 +67,21 @@
   --vp-button-brand-active-text: #22201c;
 }
 
+/* Give top-level article lists the same rail and inset as nested VitePress lists. */
+.VPSidebarItem.level-0 > .item > .text {
+  font-size: 1rem;
+}
+
+.VPSidebarItem.level-0 > .items {
+  margin-block-start: 4px;
+  border-inline-start: 1px solid var(--vp-c-divider);
+  padding-inline-start: 16px;
+}
+
+.VPSidebarItem.level-1.is-active > .item > .indicator {
+  background-color: var(--vp-c-brand-1);
+}
+
 /* Keep the landing page focused; documentation retains the default reading layout. */
 .VPContent .VPHome {
   margin-bottom: 0;

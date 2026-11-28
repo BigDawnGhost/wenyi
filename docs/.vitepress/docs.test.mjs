@@ -46,23 +46,26 @@ for (const [locale, prefix] of [['root', ''], ['zh', 'zh/']]) {
     assert.equal(env.content.trim(), '')
   })
 
-  test(`${locale}: the sidebar reaches every topic without header navigation`, () => {
-    const theme = { ...config.site.themeConfig, ...config.site.locales[locale].themeConfig }
-    assert.deepEqual(theme.nav ?? [], [])
-    assert.deepEqual(theme.socialLinks ?? [], [])
-    assert.ok(Array.isArray(theme.sidebar), 'Use one grouped sidebar across documentation sections')
-    const groups = locale === 'zh'
-      ? ['入门', '翻译与校阅', '参考', '开发维护', '发布与贡献']
-      : ['Getting started', 'Translation & review', 'Reference', 'Development', 'Releases & contributing']
-    assert.deepEqual(theme.sidebar.map((group) => group.text), groups)
-    const links = new Set(sidebarLinks(theme.sidebar))
-    const pages = config.pages.filter(
-      (page) => page.startsWith('zh/') === (locale === 'zh') && page !== `${prefix}index.md`,
-    )
-    assert.ok(pages.length > 0)
-    for (const page of pages) {
-      const route = `/${page.replace(/(^|\/)index\.md$/, '$1').replace(/\.md$/, '')}`
-      assert.ok(links.has(route), `${page} must be reachable from the sidebar`)
+  test(`${locale}: each topic belongs to one header tab and its sidebar`, () => {
+    const { nav, sidebar } = config.site.locales[locale].themeConfig
+    const sections = ['guide', 'development', 'reference'].map((name) => `/${prefix}${name}/`)
+    const routes = config.pages
+      .filter((page) => page.startsWith('zh/') === (locale === 'zh') && page !== `${prefix}index.md`)
+      .map((page) => `/${page.replace(/\/index\.md$/, '/').replace(/\.md$/, '')}`)
+    assert.deepEqual(nav.map(({ text }) => text), locale === 'zh'
+      ? ['入门', '开发', '参考']
+      : ['Guide', 'Development', 'Reference'])
+
+    for (const [i, section] of sections.entries()) {
+      const links = sidebarLinks(sidebar[section]).filter((link) => link.startsWith('/'))
+      assert.deepEqual(links.sort(), routes.filter((route) => route.startsWith(section)).sort())
+      assert.ok(links.includes(nav[i].link), `${nav[i].text} must open a page in its own sidebar`)
+    }
+    for (const route of routes) {
+      const active = nav.filter(({ activeMatch }) => new RegExp(activeMatch).test(route))
+      const section = sections.find((path) => route.startsWith(path))
+      assert.ok(section, `No section for ${route}`)
+      assert.deepEqual(active, [nav[sections.indexOf(section)]], `Wrong active tab for ${route}`)
     }
   })
 }

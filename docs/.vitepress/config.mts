@@ -6,107 +6,80 @@ import { defineConfig, type DefaultTheme } from 'vitepress'
 const repository = 'https://github.com/BigDawnGhost/wenyi'
 const base = '/wenyi/'
 
-const sidebar: DefaultTheme.SidebarItem[] = [
-  {
-    text: 'Getting started',
-    collapsed: false,
-    items: [
-      { text: 'Overview', link: '/guide/' },
-      { text: 'Desktop', link: '/guide/desktop' },
-      { text: 'Web deployment', link: '/guide/web' },
-      { text: 'CLI', link: '/guide/cli' },
-    ],
-  },
-  {
-    text: 'Translation & review',
-    collapsed: false,
-    items: [
-      { text: 'Workspace', link: '/guide/workspace' },
-      { text: 'Translation pipeline', link: '/guide/pipeline' },
-    ],
-  },
-  {
-    text: 'Reference',
-    collapsed: false,
-    items: [
-      { text: 'Configuration', link: '/reference/configuration' },
-      { text: 'Formats and exports', link: '/reference/formats' },
-    ],
-  },
-  {
-    text: 'Development',
-    collapsed: true,
-    items: [
-      { text: 'Overview', link: '/development/' },
-      { text: 'Architecture', link: '/development/architecture' },
-      { text: 'Design tokens', link: '/development/design-tokens' },
-      { text: 'Pipeline contracts', link: '/development/pipeline' },
-      { text: 'Web development', link: '/development/web' },
-      { text: 'Desktop development', link: '/development/desktop' },
-      { text: 'Frontend conventions', link: '/development/frontend' },
-    ],
-  },
-  {
-    text: 'Releases & contributing',
-    collapsed: true,
-    items: [
-      { text: 'Desktop releases', link: '/development/releasing' },
-      { text: 'Python package publishing', link: '/development/publishing' },
-      { text: 'Contributing', link: `${repository}/blob/main/CONTRIBUTING.md` },
-    ],
-  },
-]
+function navigation(locale: 'en' | 'zh') {
+  const zh = locale === 'zh'
+  const prefix = zh ? '/zh' : ''
+  const guide = `${prefix}/guide/`
+  const development = `${prefix}/development/`
+  const reference = `${prefix}/reference/`
 
-const zhSidebar: DefaultTheme.SidebarItem[] = [
-  {
-    text: '入门',
-    collapsed: false,
-    items: [
-      { text: '概览', link: '/zh/guide/' },
-      { text: 'Desktop', link: '/zh/guide/desktop' },
-      { text: 'Web 部署', link: '/zh/guide/web' },
-      { text: 'CLI', link: '/zh/guide/cli' },
+  return {
+    nav: [
+      { text: zh ? '入门' : 'Guide', link: guide, activeMatch: `^${guide}` },
+      { text: zh ? '开发' : 'Development', link: development, activeMatch: `^${development}` },
+      { text: zh ? '参考' : 'Reference', link: `${reference}configuration`, activeMatch: `^${reference}` },
     ],
-  },
-  {
-    text: '翻译与校阅',
-    collapsed: false,
-    items: [
-      { text: '工作台', link: '/zh/guide/workspace' },
-      { text: '翻译流程', link: '/zh/guide/pipeline' },
-    ],
-  },
-  {
-    text: '参考',
-    collapsed: false,
-    items: [
-      { text: '配置项', link: '/zh/reference/configuration' },
-      { text: '格式与导出', link: '/zh/reference/formats' },
-    ],
-  },
-  {
-    text: '开发维护',
-    collapsed: true,
-    items: [
-      { text: '开发入口', link: '/zh/development/' },
-      { text: '架构与模块边界', link: '/zh/development/architecture' },
-      { text: '设计令牌', link: '/zh/development/design-tokens' },
-      { text: '流程开发契约', link: '/zh/development/pipeline' },
-      { text: 'Web 开发', link: '/zh/development/web' },
-      { text: 'Desktop 开发', link: '/zh/development/desktop' },
-      { text: '前端规范', link: '/zh/development/frontend' },
-    ],
-  },
-  {
-    text: '发布与贡献',
-    collapsed: true,
-    items: [
-      { text: '桌面发布', link: '/zh/development/releasing' },
-      { text: 'Python 包发布', link: '/zh/development/publishing' },
-      { text: '贡献指南', link: `${repository}/blob/main/docs/zh/CONTRIBUTING.md` },
-    ],
-  },
-]
+    sidebar: {
+      [guide]: [
+        {
+          text: zh ? '入门' : 'Getting started',
+          items: [
+            { text: zh ? '概览' : 'Overview', link: guide },
+            { text: 'Desktop', link: `${guide}desktop` },
+            { text: zh ? 'Web 部署' : 'Web deployment', link: `${guide}web` },
+            { text: 'CLI', link: `${guide}cli` },
+          ],
+        },
+        {
+          text: zh ? '翻译与校阅' : 'Translation & review',
+          items: [
+            { text: zh ? '工作台' : 'Workspace', link: `${guide}workspace` },
+            { text: zh ? '翻译流程' : 'Translation pipeline', link: `${guide}pipeline` },
+          ],
+        },
+      ],
+      [development]: [
+        {
+          text: zh ? '架构与契约' : 'Architecture & contracts',
+          items: [
+            { text: zh ? '开发入口' : 'Overview', link: development },
+            { text: zh ? '架构与模块边界' : 'Architecture', link: `${development}architecture` },
+            { text: zh ? '流程开发契约' : 'Pipeline contracts', link: `${development}pipeline` },
+          ],
+        },
+        {
+          text: zh ? '平台与界面' : 'Platforms & UI',
+          items: [
+            { text: zh ? 'Web 开发' : 'Web development', link: `${development}web` },
+            { text: zh ? 'Desktop 开发' : 'Desktop development', link: `${development}desktop` },
+            { text: zh ? '前端规范' : 'Frontend conventions', link: `${development}frontend` },
+            { text: zh ? '设计令牌' : 'Design tokens', link: `${development}design-tokens` },
+          ],
+        },
+        {
+          text: zh ? '发布与贡献' : 'Releases & contributing',
+          items: [
+            { text: zh ? '桌面发布' : 'Desktop releases', link: `${development}releasing` },
+            { text: zh ? 'Python 包发布' : 'Python package publishing', link: `${development}publishing` },
+            {
+              text: zh ? '贡献指南' : 'Contributing',
+              link: `${repository}/blob/main/${zh ? 'docs/zh/' : ''}CONTRIBUTING.md`,
+            },
+          ],
+        },
+      ],
+      [reference]: [
+        {
+          text: zh ? '参考' : 'Reference',
+          items: [
+            { text: zh ? '配置项' : 'Configuration', link: `${reference}configuration` },
+            { text: zh ? '格式与导出' : 'Formats and exports', link: `${reference}formats` },
+          ],
+        },
+      ],
+    },
+  } satisfies Pick<DefaultTheme.Config, 'nav' | 'sidebar'>
+}
 
 export default defineConfig({
   title: 'Wenyi',
@@ -149,6 +122,7 @@ export default defineConfig({
   },
   themeConfig: {
     logo: '/wenyi-emblem.png',
+    socialLinks: [{ icon: 'github', link: repository, ariaLabel: 'Wenyi · GitHub' }],
     search: {
       provider: 'local',
       options: {
@@ -180,9 +154,7 @@ export default defineConfig({
     root: {
       label: 'English',
       lang: 'en',
-      themeConfig: {
-        sidebar,
-      },
+      themeConfig: navigation('en'),
     },
     zh: {
       label: '简体中文',
@@ -190,7 +162,7 @@ export default defineConfig({
       title: '文译',
       description: '将被语言阻隔的作品，带到读者的语言中。',
       themeConfig: {
-        sidebar: zhSidebar,
+        ...navigation('zh'),
         outline: { label: '本页目录' },
         docFooter: { prev: '上一页', next: '下一页' },
         sidebarMenuLabel: '目录',
