@@ -73,8 +73,11 @@ is scoped by its parent target directory. Injected storage bypasses this lookup.
 With book understanding enabled, every nonempty chapter needs a complete digest
 before body work. A failed chunk or merge cannot publish a partial chapter digest.
 A failed synopsis group invalidates the whole synopsis; stale retained analysis must
-not be injected as a current synopsis. Preparation never extracts or seeds glossary
-entries.
+not be injected as a current synopsis. The synopsis passes only digest-matched terms
+to style and synopsis synthesis, and keeps a snapshot of their `[target, type, gender]`
+mappings. Terms added later, unmatched terms, and note or non-sole alias edits reuse
+it; changing a matched term's target, type, or normalized gender, or removing a
+matched term, regenerates it. Preparation never extracts or seeds glossary entries.
 
 Prescan content budgets use the shared `cl100k_base` token estimator, not character
 counts or a provider-specific tokenizer. The source and reduction limits come from
@@ -295,7 +298,8 @@ fails; never reinterpret a diagnostic as successful work.
 | Cached work | Inputs that matter |
 | --- | --- |
 | Parsed source | Source content and parsing configuration |
-| Chapter digest/style/synopsis | Consumed source or summaries, task policy, and model configuration; synopsis also binds its actual guidance inputs |
+| Chapter digest/style | Consumed source or summaries, task policy, and model configuration |
+| Book synopsis | Chapter digests, synopsis policy, style guidance, languages, the `synopsis.book` inference identity, and its digest-matched glossary mapping snapshot |
 | Translation precision | Source and stable segment plan, context, glossary, translation policy and effective inference identity |
 | Annotation/style placement | Complete logical target digest and source item identities |
 | Review | Reviewed content, ordered full glossary including all metadata, guidance, policy, Review options and reachable inference identities |
