@@ -524,13 +524,13 @@ class TestPolisher(unittest.TestCase):
 
     def test_polish_mismatch_keeps_original(self):
         client = FakeClient(
-            handler=lambda m, t, j: json.dumps({"polished": ["只有一段"]}, ensure_ascii=False)
+            handler=lambda m, t, j: json.dumps({"polished": ["一", "二", "三"]}, ensure_ascii=False)
         )
         p = Polisher(client, _cfg())
         out = p.polish(["甲", "乙"])
         self.assertEqual(
             out, ["甲", "乙"]
-        )  # Preserve the original translation on paragraph-count mismatch.
+        )  # Preserve the original translation on persistent paragraph-count mismatch.
 
     def test_polish_null_items_keep_original(self):
         # A same-length list containing nulls must not coerce into literal "None" strings.

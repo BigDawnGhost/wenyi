@@ -64,10 +64,7 @@ struct Segment {
 
 impl Segment {
     fn target(&self) -> &str {
-        self.target
-            .as_deref()
-            .filter(|target| !blank(target))
-            .unwrap_or(&self.source)
+        self.target.as_deref().unwrap_or(&self.source)
     }
 
     fn heading_level(&self, chapter: &Chapter) -> Option<u8> {
@@ -353,7 +350,7 @@ fn geometry(meta: &Value, field: &str, default: usize, clamp_zero: bool) -> Resu
 }
 
 fn bilingual_source<'a>(source: &'a str, target: &str) -> Option<Cow<'a, str>> {
-    if source == target {
+    if source == target || blank(target) {
         return None;
     }
     // Strip pronunciation hints as Python does, reserving the "object:" prefix.

@@ -132,7 +132,7 @@ fn decode_xhtml_for_export(bytes: &[u8]) -> Cow<'_, str> {
 }
 
 fn has_source(s: &Saved) -> bool {
-    if s.heading || s.source == s.target {
+    if s.heading || s.source == s.target || strip(&s.target).is_empty() {
         return false;
     }
     let text = RUBY.replace_all(&s.source, |m: &regex::Captures<'_>| {

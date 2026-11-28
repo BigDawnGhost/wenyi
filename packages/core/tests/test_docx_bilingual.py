@@ -150,7 +150,7 @@ def test_bilingual_docx_source_style_is_readable_and_order_independent(
 
 @pytest.mark.parametrize("order", ["target_first", "source_first"])
 @pytest.mark.parametrize("preserve_source_style", [False, True])
-@pytest.mark.parametrize("target", [None, "", "Uniform source."])
+@pytest.mark.parametrize("target", [None, "Uniform source."])
 def test_bilingual_docx_source_fallback_is_not_duplicated_or_restyled(
     tmp_path, bilingual_docx, order, preserve_source_style, target
 ):
@@ -183,6 +183,29 @@ def test_bilingual_docx_source_fallback_is_not_duplicated_or_restyled(
         assert paragraph.runs[0].font.size == Pt(14)
         assert paragraph.runs[0].font.highlight_color is None
         assert paragraph.runs[0].font.name != "宋体"
+
+
+def test_bilingual_docx_intentional_empty_target_stays_empty(tmp_path, bilingual_docx):
+    source, snapshot = bilingual_docx
+    chapter = snapshot.load_chapter(0)
+    for segment in chapter.segments:
+        segment.source = "Uniform source."
+        segment.target = ""
+        segment.meta.pop("docx_styles", None)
+    snapshot = ExportSnapshotStore(
+        str(tmp_path / "empty"), snapshot.load_manifest(), {chapter.index: chapter}
+    )
+    written = assemble(
+        snapshot,
+        str(source),
+        out_path=str(tmp_path / "empty.docx"),
+        out_format="docx",
+        bilingual=True,
+    )
+    result = Document(written)
+    paragraphs = result.paragraphs + [cell.paragraphs[0] for cell in result.tables[0].rows[0].cells]
+    assert len(paragraphs) == 4
+    assert all(paragraph.text == "" for paragraph in paragraphs)
 
 
 @pytest.mark.parametrize(

@@ -172,8 +172,10 @@ def _export_book_title(
 
 
 def _seg_text(seg) -> str:
-    """Return a nonempty translation, falling back to source to prevent content loss."""
-    return seg.target if (seg.target and seg.target.strip()) else seg.source
+    """Return the saved translation (including an intentional empty string), falling back to
+    source only when the segment is still untranslated (``target is None``).
+    """
+    return seg.source if seg.target is None else seg.target
 
 
 def _heading_level(chapter: Chapter, segment: Segment | None = None) -> int:
@@ -229,7 +231,7 @@ def _bilingual_source(source: str, target: str) -> str:
     from wenyi_core.markup.ruby import strip_ruby_markers
 
     # Source fallbacks still include pronunciation markers, so compare before stripping them.
-    if source == target:
+    if source == target or not target.strip():
         return ""
     source = strip_ruby_markers(source)
     return source if (source.strip() and source != target) else ""
