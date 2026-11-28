@@ -18,7 +18,6 @@ pub mod codes {
     pub const UPDATE_BUSY: &str = "update_busy";
     pub const UPDATE_UNAVAILABLE: &str = "update_unavailable";
     pub const UPDATE_CHECK_FAILED: &str = "update_check_failed";
-    pub const UPDATE_DOWNLOAD_FAILED: &str = "update_download_failed";
     pub const UPDATE_INSTALL_FAILED: &str = "update_install_failed";
     pub const UPDATE_BACKUP_FAILED: &str = "update_backup_failed";
     pub const EXPORT_SOURCE_UNAVAILABLE: &str = "export_source_unavailable";
@@ -135,7 +134,6 @@ mod registry_sync {
             codes::UPDATE_BUSY,
             codes::UPDATE_UNAVAILABLE,
             codes::UPDATE_CHECK_FAILED,
-            codes::UPDATE_DOWNLOAD_FAILED,
             codes::UPDATE_INSTALL_FAILED,
             codes::UPDATE_BACKUP_FAILED,
             codes::EXPORT_SOURCE_UNAVAILABLE,
