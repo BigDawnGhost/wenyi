@@ -13,6 +13,7 @@ from rich.progress import (
 )
 from rich.table import Column
 from rich.text import Text
+from wenyi_core.progress_labels import english_progress_label
 from wenyi_core.timing import format_duration
 
 _PROGRESS_DESCRIPTION_WIDTH = 28
@@ -74,7 +75,7 @@ class RichProgressBridge:
         only needs counts and labels.
         """
         stage = (label, total if total > 0 else None)
-        short = _short_progress_description(label)
+        short = _short_progress_description(english_progress_label(label))
         if total > 0:
             if stage != self._stage:
                 # A completed Rich task retains its finished time until reset.

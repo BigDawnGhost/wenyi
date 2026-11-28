@@ -519,6 +519,10 @@ Each invocation generates a fresh `run_id`. Files include `protocol_version`,
 | Successful result | `status: "success"`, `source_sha256`, absolute `state_dir`, and `outputs` containing absolute `path`, byte `size`, and `sha256`. |
 | Failed result | `status: "failed"`, empty `outputs`, generic `error`; details remain in terminal/log output. |
 
+The `label` is display text, not a stage identifier. Known stage keys are
+rendered in English (for example, `progress.stage.chapter:3` becomes `Chapter 3`);
+other labels, such as source chapter titles, are passed through unchanged.
+
 Chapter-only success has an empty output list because it does not export.
 For failures before receipt initialization, or failure to write the receipt, a
 fresh receipt may be unavailable. A killed process can leave `running` behind.

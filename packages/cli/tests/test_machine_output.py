@@ -281,6 +281,23 @@ def _payload_machine(tmp_path, **kwargs):
     return machine, progress
 
 
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    [
+        ("progress.stage.parsing", "Parsing document…"),
+        ("progress.stage.reviewRound:1", "Whole-book review R1"),
+        (
+            "progress.stage.chapter:2 · Generating three translations",
+            "Chapter 2 · Generating three translations",
+        ),
+    ],
+)
+def test_machine_progress_renders_pipeline_keys_in_english(tmp_path, label, expected):
+    machine, progress = _payload_machine(tmp_path)
+    machine(1, 4, label)
+    assert json.loads(progress.read_text(encoding="utf-8"))["label"] == expected
+
+
 def test_machine_progress_writes_whitelisted_payload(tmp_path):
     machine, progress = _payload_machine(tmp_path)
 
@@ -330,7 +347,9 @@ def test_machine_progress_passthrough_keeps_structured_payload(workflow, tmp_pat
         def run_all(self, input_path, *, progress, **kwargs):
             progress(1, 3, "Translating")
             seen["plain"] = json.loads((tmp_path / "progress.json").read_text())
-            emit_progress(progress, 2, 3, "Annotating", payload={"chapter": 7, "secret": "nope"})
+            emit_progress(
+                progress, 2, 3, "progress.stage.chapter:7", payload={"chapter": 7, "secret": "nope"}
+            )
             seen["located"] = json.loads((tmp_path / "progress.json").read_text())
             output.write_bytes(b"%PDF-1.7\ntranslated\n%%EOF")
             return {"store": store, "outputs": [str(output)], "output": str(output)}
@@ -340,4 +359,5 @@ def test_machine_progress_passthrough_keeps_structured_payload(workflow, tmp_pat
 
     assert response.exit_code == 0, response.output
     assert "payload" not in seen["plain"]
+    assert seen["located"]["label"] == "Chapter 7"
     assert seen["located"]["payload"] == {"chapter": 7}

@@ -10,6 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from wenyi_core.atomicio import publish_bytes
+from wenyi_core.progress_labels import english_progress_label
 
 
 def file_digest(path: Path) -> str:
@@ -80,7 +81,7 @@ class MachineOutput:
             "status": "running",
             "done": done,
             "total": total if total > 0 else None,
-            "label": label,
+            "label": english_progress_label(label),
         }
         filtered = self._filter_payload(payload)
         if filtered:

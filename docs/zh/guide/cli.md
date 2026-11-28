@@ -451,6 +451,9 @@ CLI 会拒绝与源文件、配置及显式 `--out` 路径冲突。
 | 成功结果 | `status: "success"`、`source_sha256`、绝对 `state_dir`；`outputs` 含绝对 `path`、字节 `size` 和 `sha256`。 |
 | 失败结果 | `status: "failed"`、空 `outputs` 和通用 `error`；详情在终端／日志中。 |
 
+`label` 是显示文案，不是阶段标识。已知的阶段键会转换成英文
+（例如 `progress.stage.chapter:3` 会显示为 `Chapter 3`）；源文章节标题等其他标签原样保留。
+
 单章翻译不导出，成功回执的输出清单为空。
 在回执初始化前失败或无法写入回执时，可能没有本次新回执。
 强杀的进程可能留下 `running`。
