@@ -12,21 +12,25 @@ A desktop app for translating books and long-form writing, with the whole work i
 
 Whole-book understanding · Consistent terminology · Evidence-based review
 
+[![Documentation](https://img.shields.io/badge/Docs-English-D4B56A?style=flat-square&labelColor=00263D)](https://bigdawnghost.github.io/wenyi/)
+
 [![License](https://img.shields.io/badge/license-GPLv3-D4B56A?style=flat-square&labelColor=00263D)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/BigDawnGhost/wenyi?style=flat-square&labelColor=00263D&color=D4B56A)](https://github.com/BigDawnGhost/wenyi/stargazers)
 [![Discord](https://img.shields.io/badge/Discord-join-D4B56A?style=flat-square&labelColor=00263D&logo=discord&logoColor=white)](https://discord.gg/sM3AQcF5D2)
 
-[Quick start](#quick-start) · [Supported formats](#supported-formats) · [Interface preview](#interface-preview) · [Documentation](#documentation)
-
 **English** | [简体中文](docs/zh/README.md)
+
+</div>
+
+---
+
+<div align="center">
 
 <a href="https://hellogithub.com/repository/BigDawnGhost/wenyi" target="_blank"><img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=648c0ab0997c42479027e360f604fa23&claim_uid=EkLpt1FHIqRrade&theme=small" alt="Featured｜HelloGitHub" /></a>
 
 <a href="https://www.readfrog.app/zh?utm_source=github&utm_medium=readme&utm_campaign=wenyi&utm_content=en" target="_blank"><img src="docs/images/read-frog-banner.png" alt="陪读蛙：在浏览器里沉浸式双语翻译网页、划词与 YouTube 字幕，免费安装，开始翻译。" /></a>
 
 </div>
-
----
 
 ## Why Wenyi
 
@@ -36,7 +40,8 @@ Wenyi is designed for **long-form texts** — novels, social-science monographs,
 - **Consistent terminology** — names, terms, and recurring expressions are extracted during translation; conflicting translations are surfaced for resolution and feed back into subsequent batches.
 - **Translation and review** — optional polishing and evidence-driven whole-book review complement paragraph editing with revision history.
 - **Resumable progress** — completed batches and chapters are saved; reopen the project and continue from its checkpoints.
-- **Flexible models** — use DeepSeek, OpenAI, OpenRouter, OrcaRouter, Google Gemini, Ollama, vLLM, or other OpenAI-compatible services. Choose models per operation and share request limits through [model routing](docs/reference/configuration.md).
+
+![Translation, terminology and review sequence: batches save text before extracting terms; Review checks evidence in a working copy, and Autofix verifies saved text before publishing revisions.](docs/images/translation-sequence.svg)
 
 ---
 
@@ -87,35 +92,11 @@ For a self-hosted browser workspace, see [Web deployment](docs/guide/web.md).
 
 ---
 
-## Interface preview
-
-Desktop and Web share the proofreading workspace: live progress, paragraph editing with revision history, and whole-book review results. The screenshot below shows the Web Chinese interface; English is available in Settings.
-
-<p align="center">
-  <img src="docs/images/web-translation-overview.png" alt="Translation overview: usage by step, cache hit rates, and run durations." width="960">
-  <br>
-  <sub>Translation overview: usage by step, cache hit rates, and run durations.</sub>
-</p>
-
-**Translation examples:** browse public-domain translations in [wenyi-bookcase](https://github.com/BigDawnGhost/wenyi-bookcase), or contribute your own. Do not share copyrighted text, private books, or sensitive workspace data without permission.
-
----
-
 ## Limitations
 
 - **Translation quality** — Results are bounded by the capabilities of the chosen LLM model.
 - **Token usage** — Polishing and whole-book review can significantly increase token usage. Shadow fixing may trigger multiple full-book review passes and additional Fixer calls.
 - **Storage** — Workspace size grows with book length; very long books may require substantial disk space.
-
----
-
-## Documentation
-
-**Documentation site:** [bigdawnghost.github.io/wenyi](https://bigdawnghost.github.io/wenyi/)
-
-The site groups user guides, reference material, and developer documentation in its
-sidebar. Switch between English and Simplified Chinese using the site's language menu.
-Contribution and review requirements remain in [Contributing](CONTRIBUTING.md).
 
 ---
 
