@@ -108,7 +108,7 @@ backup steps are documented in the [Desktop guide](../guide/desktop.md#data-loca
 | `<data-root>/catalog.sqlite3` | Project/job catalog, settings and opaque credential references |
 | `<data-root>/projects/` | Default library of project SQLite state, originals, parse caches and exports |
 | `<data-root>/logs/`, `locks/` | Diagnostics, process admission and activation records |
-| `<data-root>/runtime/` | Plugin runtime/sessions and Windows/Linux WebView data |
+| `<data-root>/runtime/` | Plugin runtime/sessions, Windows/Linux WebView data and remembered window geometry |
 | `<data-root>/backups/` | Verified in-app upgrade snapshots |
 | External project libraries | Explicitly selected local locations, recorded per project in the catalog |
 

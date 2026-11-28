@@ -23,6 +23,7 @@ mod publish;
 #[cfg(any(windows, test))]
 mod uninstall;
 mod updates;
+mod window_state;
 
 use crate::mutex::lock;
 use std::sync::{
@@ -343,6 +344,7 @@ fn main() {
     let startup_engine = engine.clone();
     let startup_state = state.clone();
     let notification_workspace = workspace.clone();
+    let window_store = window_state::Store::new(&workspace);
     let tray_available = Arc::new(AtomicBool::new(false));
     let setup_tray = tray_available.clone();
     let app = tauri::Builder::default()
@@ -358,6 +360,7 @@ fn main() {
             .build())
         .manage(native_drop::Grants::default())
         .manage(native_export::Saves::default())
+        .manage(window_store.clone())
         .invoke_handler(tauri::generate_handler![
             library_choose::native_library_choose,
             native_drop::native_drop_release,
@@ -386,6 +389,21 @@ fn main() {
             if let tauri::WindowEvent::DragDrop(event) = event {
                 if let Some(window) = window.app_handle().get_webview_window(window.label()) {
                     native_drop::event(&window, event);
+                }
+            }
+            if window.label() == "main"
+                && matches!(
+                    event,
+                    tauri::WindowEvent::Moved(_)
+                        | tauri::WindowEvent::Resized(_)
+                        | tauri::WindowEvent::ScaleFactorChanged { .. }
+                )
+            {
+                if let Some(window) = window.app_handle().get_webview_window(window.label()) {
+                    window
+                        .app_handle()
+                        .state::<window_state::Store>()
+                        .schedule(&window);
                 }
             }
         })
@@ -419,24 +437,50 @@ fn main() {
                 }
                 publish(&handle, &backend_state);
             });
-            // The shared shell reserves 752 logical px for content plus the 240 px
-            // expanded sidebar, so a narrower minimum would clip settings behind a
-            // horizontal scrollbar; 1024 leaves room for both scrollbar styles.
-            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("Wenyi").inner_size(1280.0, 850.0).min_inner_size(1024.0, 600.0)
-                .visible(false)
-                .data_directory(webview_data)
-                .initialization_script(lock(&startup_state).script())
-                .on_navigation(trusted)
-                .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
-                .on_page_load(move |window, payload| {
-                    if trusted(payload.url()) {
-                        window.state::<native_drop::Grants>().clear();
-                        background::refresh(window.app_handle());
-                        let _ = window.eval(lock(&reload_state).script());
-                    }
+            let primary_monitor = app.primary_monitor().ok().flatten();
+            let monitors = app.available_monitors().unwrap_or_default();
+            let screens = monitors
+                .iter()
+                .map(|monitor| {
+                    let is_primary = primary_monitor.as_ref().is_some_and(|primary| {
+                        primary.position() == monitor.position()
+                            && primary.scale_factor() == monitor.scale_factor()
+                    });
+                    window_state::Screen::from_monitor(monitor, is_primary)
                 })
-                .build()?;
+                .collect::<Vec<_>>();
+            let initial_placement = window_store.initial_placement(&screens);
+            let mut window_builder = WebviewWindowBuilder::new(
+                app,
+                "main",
+                WebviewUrl::App("index.html".into()),
+            )
+            .title("Wenyi")
+            .visible(false)
+            .prevent_overflow()
+            .data_directory(webview_data)
+            .initialization_script(lock(&startup_state).script())
+            .on_navigation(trusted)
+            .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+            .on_page_load(move |window, payload| {
+                if trusted(payload.url()) {
+                    window.state::<native_drop::Grants>().clear();
+                    background::refresh(window.app_handle());
+                    let _ = window.eval(lock(&reload_state).script());
+                }
+            });
+            if let Some(placement) = initial_placement {
+                window_builder = window_builder
+                    .position(placement.x, placement.y)
+                    .inner_size(placement.width, placement.height)
+                    .min_inner_size(placement.min_width, placement.min_height);
+            } else {
+                window_builder = window_builder
+                    .center()
+                    .inner_size(1280.0, 720.0);
+            }
+            let window = window_builder.build()?;
+            window_store.start_worker();
             app.state::<interface_zoom::InterfaceZoom>().restore(&window);
             window.show()?;
             setup_tray.store(background::install(app.handle())?, Ordering::SeqCst);
@@ -510,6 +554,9 @@ fn main() {
                 ..
             } if label == "main" => {
                 api.prevent_close();
+                if let Some(window) = handle.get_webview_window("main") {
+                    handle.state::<window_state::Store>().save_now(&window);
+                }
                 if !closing.load(Ordering::SeqCst) {
                     background::close(handle, tray_available.load(Ordering::SeqCst));
                 }
@@ -517,6 +564,9 @@ fn main() {
             }
             tauri::RunEvent::ExitRequested { api, .. } if !closed.load(Ordering::SeqCst) => {
                 api.prevent_exit();
+                if let Some(window) = handle.get_webview_window("main") {
+                    handle.state::<window_state::Store>().save_now(&window);
+                }
                 true
             }
             tauri::RunEvent::WindowEvent { .. } => {
